@@ -1,9 +1,8 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
 use winit::{
-    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
+    event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
-    platform::run_return::EventLoopExtRunReturn,
     window::WindowBuilder,
 };
 

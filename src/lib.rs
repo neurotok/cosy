@@ -8,14 +8,9 @@ pub use ash::{Device, Instance};
 
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
-use winit::{
-    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    platform::run_return::EventLoopExtRunReturn,
-    window::WindowBuilder,
-};
+use winit;
 
 use std::borrow::Cow;
 use std::ffi::CStr;
@@ -54,8 +49,9 @@ unsafe extern "system" fn vulkan_debug_callback(
 
 pub struct App {
     entry: Entry,
-    instance: Instance,
     app_data: AppData,
+    instance: Instance,
+    device: Device,
 }
 
 impl App {
@@ -76,14 +72,13 @@ impl App {
 
         let video_extensions = CStr::from_bytes_with_nul_unchecked(b"VK_KHR_video_queue\0");
 
-        let physical_device = pick_physical_device(&instance, &entry, &mut app_data)?;
-
-        app_data.physical_device = physical_device.0;
+        let device = create_device(&instance, &entry, &mut app_data)?;
 
         Ok(Self {
             entry,
-            instance,
             app_data,
+            instance,
+            device,
         })
     }
     pub unsafe fn render(&mut self, window: &winit::window::Window) -> Result<()> {
@@ -166,11 +161,11 @@ pub unsafe fn create_instance(
     Ok(instance)
 }
 
-pub unsafe fn pick_physical_device(
+pub unsafe fn create_device(
     instance: &Instance,
     entry: &Entry,
     app_data: &mut AppData,
-) -> Result<(vk::PhysicalDevice, u32)> {
+) -> Result<Device> {
     let pdevices = instance
         .enumerate_physical_devices()
         .expect("Physical device error");
@@ -202,5 +197,29 @@ pub unsafe fn pick_physical_device(
         .expect("Couldn't find suitable device.");
     let queue_family_index = queue_family_index as u32;
 
-    Ok((pdevice, queue_family_index))
+    let device_extension_names_raw = [
+        Swapchain::name().as_ptr(),
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        KhrPortabilitySubsetFn::name().as_ptr(),
+    ];
+    let features = vk::PhysicalDeviceFeatures {
+        shader_clip_distance: 1,
+        ..Default::default()
+    };
+    let priorities = [1.0];
+
+    let queue_info = vk::DeviceQueueCreateInfo::builder()
+        .queue_family_index(queue_family_index)
+        .queue_priorities(&priorities);
+
+    let device_create_info = vk::DeviceCreateInfo::builder()
+        .queue_create_infos(std::slice::from_ref(&queue_info))
+        .enabled_extension_names(&device_extension_names_raw)
+        .enabled_features(&features);
+
+    let device: Device = instance
+        .create_device(pdevice, &device_create_info, None)
+        .unwrap();
+
+    Ok(device)
 }
