@@ -213,7 +213,6 @@ pub unsafe fn create_device(
             {
                 app_data.physical_device = pdevice;
                 app_data.grapgics_queue_family_index = Some(j as u32);
-                break;
             }
         }
     }
