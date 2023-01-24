@@ -1,7 +1,7 @@
-use ash::extensions::{
+use ash::{extensions::{
     ext::DebugUtils,
     khr::{Surface, Swapchain},
-};
+}, vk::{KhrVideoDecodeQueueFn, KhrVideoQueueFn, PFN_vkDeviceWaitIdle, KhrGetDisplayProperties2Fn, KhrSamplerYcbcrConversionFn}};
 
 use ash::{vk, Entry};
 pub use ash::{Device, Instance};
@@ -12,7 +12,7 @@ use anyhow::Result;
 
 use winit;
 
-use std::borrow::Cow;
+use std::{borrow::Cow, any::Any};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -94,8 +94,20 @@ pub struct AppData {
     pub debug_call_back: vk::DebugUtilsMessengerEXT,
     pub surface: vk::SurfaceKHR,
     pub physical_device: vk::PhysicalDevice,
+    pub grapgics_queue_family_index: Option<u32>,
+    pub decode_queue_family_index: Option<u32>,
     pub graphics_queue: vk::Queue,
 }
+
+impl Drop for App {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_device(None);
+            self.instance.destroy_instance(None);
+        }
+    }
+}
+    
 
 pub unsafe fn create_instance(
     window: &winit::window::Window,
@@ -124,7 +136,7 @@ pub unsafe fn create_instance(
         .application_version(0)
         .engine_name(app_name)
         .engine_version(0)
-        .api_version(vk::make_api_version(0, 1, 0, 0));
+        .api_version(vk::make_api_version(0, 1, 3, 0));
 
     let create_flags = vk::InstanceCreateFlags::default();
 
@@ -170,37 +182,48 @@ pub unsafe fn create_device(
         .enumerate_physical_devices()
         .expect("Physical device error");
     let surface_loader = Surface::new(&entry, &instance);
-    let (pdevice, queue_family_index) = pdevices
-        .iter()
-        .find_map(|pdevice| {
-            instance
-                .get_physical_device_queue_family_properties(*pdevice)
-                .iter()
-                .enumerate()
-                .find_map(|(index, info)| {
-                    let supports_graphic_and_surface =
-                        info.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-                            && surface_loader
-                                .get_physical_device_surface_support(
-                                    *pdevice,
-                                    index as u32,
-                                    app_data.surface,
-                                )
-                                .unwrap();
-                    if supports_graphic_and_surface {
-                        Some((*pdevice, index))
-                    } else {
-                        None
-                    }
-                })
-        })
-        .expect("Couldn't find suitable device.");
-    let queue_family_index = queue_family_index as u32;
+
+    for i in 0..pdevices.len() {
+        let pdevice = pdevices[i];
+
+        let pdevice_properties = instance.get_physical_device_properties(pdevice);
+
+        if pdevice_properties.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
+            continue;
+        }
+
+        let queue_family_properties =
+            instance.get_physical_device_queue_family_properties(pdevice);
+
+        for j in 0..queue_family_properties.len() {
+            let queue_family_property = queue_family_properties[j];
+
+            if queue_family_property.queue_flags.contains(vk::QueueFlags::VIDEO_DECODE_KHR) {
+                app_data.decode_queue_family_index = Some(j as u32);
+            }
+
+            if queue_family_property.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+                && surface_loader
+                    .get_physical_device_surface_support(
+                        pdevice,
+                        j as u32,
+                        app_data.surface,
+                    )
+                    .unwrap()
+            {
+                app_data.physical_device = pdevice;
+                app_data.grapgics_queue_family_index = Some(j as u32);
+                break;
+            }
+        }
+    }
+
+    // Are we able to find a decode queue family?
+    assert!(app_data.decode_queue_family_index.is_some());
 
     let device_extension_names_raw = [
         Swapchain::name().as_ptr(),
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        KhrPortabilitySubsetFn::name().as_ptr(),
+        KhrVideoQueueFn::name().as_ptr(),
     ];
     let features = vk::PhysicalDeviceFeatures {
         shader_clip_distance: 1,
@@ -209,7 +232,7 @@ pub unsafe fn create_device(
     let priorities = [1.0];
 
     let queue_info = vk::DeviceQueueCreateInfo::builder()
-        .queue_family_index(queue_family_index)
+        .queue_family_index(app_data.grapgics_queue_family_index.unwrap())
         .queue_priorities(&priorities);
 
     let device_create_info = vk::DeviceCreateInfo::builder()
@@ -218,7 +241,7 @@ pub unsafe fn create_device(
         .enabled_features(&features);
 
     let device: Device = instance
-        .create_device(pdevice, &device_create_info, None)
+        .create_device(app_data.physical_device, &device_create_info, None)
         .unwrap();
 
     Ok(device)
