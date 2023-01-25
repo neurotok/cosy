@@ -1,20 +1,26 @@
-use ash::{extensions::{
-    ext::DebugUtils,
-    khr::{Surface, Swapchain},
-}, vk::{KhrVideoDecodeQueueFn, KhrVideoQueueFn, PFN_vkDeviceWaitIdle, KhrGetDisplayProperties2Fn, KhrSamplerYcbcrConversionFn}};
+use ash::{
+    extensions::{
+        ext::DebugUtils,
+        khr::{Surface, Swapchain},
+    },
+    vk::{
+        KhrGetDisplayProperties2Fn, KhrSamplerYcbcrConversionFn, KhrVideoDecodeQueueFn,
+        KhrVideoQueueFn, PFN_vkDeviceWaitIdle,
+    },
+};
 
 use ash::{vk, Entry};
 pub use ash::{Device, Instance};
 
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 
 use winit;
 
-use std::{borrow::Cow, any::Any};
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::{any::Any, borrow::Cow};
 
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 
@@ -108,7 +114,6 @@ impl Drop for App {
         }
     }
 }
-    
 
 pub unsafe fn create_instance(
     window: &winit::window::Window,
@@ -130,7 +135,9 @@ pub unsafe fn create_instance(
             .unwrap()
             .to_vec();
 
-    extension_names.push(DebugUtils::name().as_ptr());
+    if VALIDATION_ENABLED {
+        extension_names.push(DebugUtils::name().as_ptr());
+    }
 
     let appinfo = vk::ApplicationInfo::builder()
         .application_name(app_name)
@@ -151,22 +158,22 @@ pub unsafe fn create_instance(
         .create_instance(&create_info, None)
         .expect("Instance creation error");
 
-    let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
-        .message_severity(
-            vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
-                | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-                | vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
-        )
-        .message_type(
-            vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
-                | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
-                | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
-        )
-        .pfn_user_callback(Some(vulkan_debug_callback));
-
-    let debug_utils_loader = DebugUtils::new(&entry, &instance);
-
     if VALIDATION_ENABLED {
+        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+            .message_severity(
+                vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                    | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                    | vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
+            )
+            .message_type(
+                vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                    | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                    | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+            )
+            .pfn_user_callback(Some(vulkan_debug_callback));
+
+        let debug_utils_loader = DebugUtils::new(&entry, &instance);
+
         app_data.debug_call_back =
             debug_utils_loader.create_debug_utils_messenger(&debug_info, None)?
     }
@@ -193,23 +200,23 @@ pub unsafe fn create_device(
             continue;
         }
 
-        let queue_family_properties =
-            instance.get_physical_device_queue_family_properties(pdevice);
+        let queue_family_properties = instance.get_physical_device_queue_family_properties(pdevice);
 
         for j in 0..queue_family_properties.len() {
             let queue_family_property = queue_family_properties[j];
 
-            if queue_family_property.queue_flags.contains(vk::QueueFlags::VIDEO_DECODE_KHR) {
+            if queue_family_property
+                .queue_flags
+                .contains(vk::QueueFlags::VIDEO_DECODE_KHR)
+            {
                 app_data.decode_queue_family_index = Some(j as u32);
             }
 
-            if queue_family_property.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+            if queue_family_property
+                .queue_flags
+                .contains(vk::QueueFlags::GRAPHICS)
                 && surface_loader
-                    .get_physical_device_surface_support(
-                        pdevice,
-                        j as u32,
-                        app_data.surface,
-                    )
+                    .get_physical_device_surface_support(pdevice, j as u32, app_data.surface)
                     .unwrap()
             {
                 app_data.physical_device = pdevice;
@@ -221,10 +228,11 @@ pub unsafe fn create_device(
     // Are we able to find a decode queue family?
     assert!(app_data.decode_queue_family_index.is_some());
 
-    let device_extension_names_raw = [
-        Swapchain::name().as_ptr(),
-        KhrVideoQueueFn::name().as_ptr(),
-    ];
+    if app_data.decode_queue_family_index.is_none() {
+        return Err(anyhow!("Video decode not supported on this platform"));
+    }
+
+    let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
     let features = vk::PhysicalDeviceFeatures {
         shader_clip_distance: 1,
         ..Default::default()
