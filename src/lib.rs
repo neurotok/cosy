@@ -9,6 +9,8 @@ use ash::{
     },
 };
 
+use std::rc::Rc;
+
 use ash::{vk, Entry};
 pub use ash::{Device, Instance};
 
@@ -100,8 +102,8 @@ pub struct AppData {
     pub debug_call_back: vk::DebugUtilsMessengerEXT,
     pub surface: vk::SurfaceKHR,
     pub physical_device: vk::PhysicalDevice,
-    pub grapgics_queue_family_index: Option<u32>,
-    pub decode_queue_family_index: Option<u32>,
+    pub grapgics_queue_family_index: u32,
+    pub decode_queue_family_index: u32,
     pub graphics_queue: vk::Queue,
 }
 
@@ -125,10 +127,15 @@ pub unsafe fn create_instance(
     let layer_names = [CStr::from_bytes_with_nul_unchecked(
         b"VK_LAYER_KHRONOS_validation\0",
     )];
-    let layers_names_raw: Vec<*const c_char> = layer_names
-        .iter()
-        .map(|raw_name| raw_name.as_ptr())
-        .collect();
+
+    let layers_names_raw: Vec<*const c_char> = if VALIDATION_ENABLED {
+        layer_names
+            .iter()
+            .map(|raw_name| raw_name.as_ptr())
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let mut extension_names =
         ash_window::enumerate_required_extensions(window.raw_display_handle())
@@ -150,8 +157,8 @@ pub unsafe fn create_instance(
 
     let create_info = vk::InstanceCreateInfo::builder()
         .application_info(&appinfo)
-        .enabled_layer_names(&layers_names_raw)
         .enabled_extension_names(&extension_names)
+        .enabled_layer_names(&layers_names_raw)
         .flags(create_flags);
 
     let instance: Instance = entry
@@ -191,14 +198,14 @@ pub unsafe fn create_device(
         .expect("Physical device error");
     let surface_loader = Surface::new(&entry, &instance);
 
+    let mut found_graphics_queue = false;
+    let mut found_decode_queue = false;
+
     for i in 0..pdevices.len() {
         let pdevice = pdevices[i];
 
-        let pdevice_properties = instance.get_physical_device_properties(pdevice);
-
-        if pdevice_properties.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
-            continue;
-        }
+        found_graphics_queue = false;
+        found_decode_queue = false;
 
         let queue_family_properties = instance.get_physical_device_queue_family_properties(pdevice);
 
@@ -209,7 +216,8 @@ pub unsafe fn create_device(
                 .queue_flags
                 .contains(vk::QueueFlags::VIDEO_DECODE_KHR)
             {
-                app_data.decode_queue_family_index = Some(j as u32);
+                found_decode_queue = true;
+                app_data.decode_queue_family_index = j as u32;
             }
 
             if queue_family_property
@@ -219,18 +227,30 @@ pub unsafe fn create_device(
                     .get_physical_device_surface_support(pdevice, j as u32, app_data.surface)
                     .unwrap()
             {
-                app_data.physical_device = pdevice;
-                app_data.grapgics_queue_family_index = Some(j as u32);
+                found_graphics_queue = true;
+                app_data.grapgics_queue_family_index = j as u32;
             }
+        }
+        if found_decode_queue && found_graphics_queue {
+            app_data.physical_device = pdevice;
+            break;
         }
     }
 
-    // Are we able to find a decode queue family?
-    assert!(app_data.decode_queue_family_index.is_some());
-
-    if app_data.decode_queue_family_index.is_none() {
-        return Err(anyhow!("Video decode not supported on this platform"));
+    if !found_graphics_queue || !found_decode_queue {
+        return Err(anyhow!(
+            "Video decode and graphics display are not supported on this platform"
+        ));
     }
+
+    println!(
+        "Decode queue family index: {:?}",
+        app_data.decode_queue_family_index
+    );
+    println!(
+        "Graphics queue family index: {:?}",
+        app_data.grapgics_queue_family_index
+    );
 
     let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
     let features = vk::PhysicalDeviceFeatures {
@@ -240,7 +260,7 @@ pub unsafe fn create_device(
     let priorities = [1.0];
 
     let queue_info = vk::DeviceQueueCreateInfo::builder()
-        .queue_family_index(app_data.grapgics_queue_family_index.unwrap())
+        .queue_family_index(app_data.grapgics_queue_family_index)
         .queue_priorities(&priorities);
 
     let device_create_info = vk::DeviceCreateInfo::builder()
