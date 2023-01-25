@@ -4,12 +4,10 @@ use ash::{
         khr::{Surface, Swapchain},
     },
     vk::{
-        KhrGetDisplayProperties2Fn, KhrSamplerYcbcrConversionFn, KhrVideoDecodeQueueFn,
-        KhrVideoQueueFn, PFN_vkDeviceWaitIdle,
+        KhrVideoQueueFn,
     },
 };
 
-use std::rc::Rc;
 
 use ash::{vk, Entry};
 pub use ash::{Device, Instance};
@@ -22,7 +20,7 @@ use winit;
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::{any::Any, borrow::Cow};
+use std::{borrow::Cow};
 
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 
@@ -77,8 +75,6 @@ impl App {
             window.raw_window_handle(),
             None,
         )?;
-
-        let video_extensions = CStr::from_bytes_with_nul_unchecked(b"VK_KHR_video_queue\0");
 
         let device = create_device(&instance, &entry, &mut app_data)?;
 
@@ -257,14 +253,22 @@ pub unsafe fn create_device(
         shader_clip_distance: 1,
         ..Default::default()
     };
-    let priorities = [1.0];
-
-    let queue_info = vk::DeviceQueueCreateInfo::builder()
+    let priorities = [0.0];
+    
+    let graphics_queue_info = vk::DeviceQueueCreateInfo::builder()
         .queue_family_index(app_data.grapgics_queue_family_index)
-        .queue_priorities(&priorities);
+        .queue_priorities(&priorities)
+        .build();
+
+    let decode_queue_info = vk::DeviceQueueCreateInfo::builder()
+        .queue_family_index(app_data.decode_queue_family_index)
+        .queue_priorities(&priorities)
+        .build();
+
+    let queue_infos = [graphics_queue_info, decode_queue_info];
 
     let device_create_info = vk::DeviceCreateInfo::builder()
-        .queue_create_infos(std::slice::from_ref(&queue_info))
+        .queue_create_infos(&queue_infos)
         .enabled_extension_names(&device_extension_names_raw)
         .enabled_features(&features);
 
