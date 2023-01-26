@@ -19,7 +19,7 @@ use std::borrow::Cow;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
-const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
+pub const DEBUG_ENABLED: bool = cfg!(debug_assertions);
 
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -121,7 +121,7 @@ pub unsafe fn create_instance(
         b"VK_LAYER_KHRONOS_validation\0",
     )];
 
-    let layers_names_raw: Vec<*const c_char> = if VALIDATION_ENABLED {
+    let layers_names_raw: Vec<*const c_char> = if DEBUG_ENABLED {
         layer_names
             .iter()
             .map(|raw_name| raw_name.as_ptr())
@@ -135,7 +135,7 @@ pub unsafe fn create_instance(
             .unwrap()
             .to_vec();
 
-    if VALIDATION_ENABLED {
+    if DEBUG_ENABLED {
         extension_names.push(DebugUtils::name().as_ptr());
     }
 
@@ -158,7 +158,7 @@ pub unsafe fn create_instance(
         .create_instance(&create_info, None)
         .expect("Instance creation error");
 
-    if VALIDATION_ENABLED {
+    if DEBUG_ENABLED {
         let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
