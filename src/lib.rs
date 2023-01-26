@@ -3,11 +3,8 @@ use ash::{
         ext::DebugUtils,
         khr::{Surface, Swapchain},
     },
-    vk::{
-        KhrVideoQueueFn,
-    },
+    vk::{KhrVideoQueueFn, QueueFamilyProperties2},
 };
-
 
 use ash::{vk, Entry};
 pub use ash::{Device, Instance};
@@ -18,9 +15,9 @@ use anyhow::{anyhow, Result};
 
 use winit;
 
+use std::borrow::Cow;
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::{borrow::Cow};
 
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
 
@@ -205,6 +202,19 @@ pub unsafe fn create_device(
 
         let queue_family_properties = instance.get_physical_device_queue_family_properties(pdevice);
 
+        let needed_video_vodec_op = vk::VideoCodecOperationFlagsKHR::DECODE_H264_EXT;
+
+        let mut video_family_properties = [QueueFamilyProperties2::default()];
+
+        instance
+            .get_physical_device_queue_family_properties2(pdevice, &mut video_family_properties);
+
+        println!(
+            "Lenght {} video_family_properties: {:?}",
+            video_family_properties.len(),
+            video_family_properties
+        );
+
         for j in 0..queue_family_properties.len() {
             let queue_family_property = queue_family_properties[j];
 
@@ -254,7 +264,7 @@ pub unsafe fn create_device(
         ..Default::default()
     };
     let priorities = [0.0];
-    
+
     let graphics_queue_info = vk::DeviceQueueCreateInfo::builder()
         .queue_family_index(app_data.grapgics_queue_family_index)
         .queue_priorities(&priorities)
