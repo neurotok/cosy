@@ -224,6 +224,10 @@ pub unsafe fn create_device(
                 if video_queue_family_properties
                     .video_codec_operations
                     .contains(vk::VideoCodecOperationFlagsKHR::DECODE_H265_EXT)
+                    // Nvidia driver bug
+                    || video_queue_family_properties
+                    .video_codec_operations
+                    .contains(std::mem::transmute::<u32, vk::VideoCodecOperationFlagsKHR>(0x10000))
                 {
                     found_decode_queue = true;
                     app_data.decode_queue_family_index = j as u32;
@@ -242,15 +246,21 @@ pub unsafe fn create_device(
                 app_data.grapgics_queue_family_index = j as u32;
             }
         }
+
         if found_decode_queue && found_graphics_queue {
             app_data.physical_device = pdevice;
             break;
         }
     }
 
-    if !found_graphics_queue || !found_decode_queue {
+    if !found_decode_queue {
         return Err(anyhow!(
-            "Video decode and graphics display are not supported on this platform"
+            "H264 video decode is not supported on this platform"
+        ));
+    }
+    if !found_graphics_queue {
+        return Err(anyhow!(
+            "Graphics display is not supported on this platform"
         ));
     }
 
