@@ -1,9 +1,9 @@
 use ash::{
     extensions::{
         ext::DebugUtils,
-        khr::{Surface, Swapchain},
+        khr::{Surface, Swapchain, VideoQueue},
     },
-    vk::{KhrVideoQueueFn, QueueFamilyProperties2},
+    vk::KhrVideoQueueFn,
 };
 
 use ash::{vk, Entry};
@@ -15,7 +15,7 @@ use anyhow::{anyhow, Result};
 
 use winit;
 
-use std::borrow::Cow;
+use std::{borrow::Cow, rc::Rc};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -139,7 +139,7 @@ pub unsafe fn create_instance(
         extension_names.push(DebugUtils::name().as_ptr());
     }
 
-    let appinfo = vk::ApplicationInfo::builder()
+    let appinfo = vk::ApplicationInfo::default()
         .application_name(app_name)
         .application_version(0)
         .engine_name(app_name)
@@ -148,7 +148,7 @@ pub unsafe fn create_instance(
 
     let create_flags = vk::InstanceCreateFlags::default();
 
-    let create_info = vk::InstanceCreateInfo::builder()
+    let create_info = vk::InstanceCreateInfo::default()
         .application_info(&appinfo)
         .enabled_extension_names(&extension_names)
         .enabled_layer_names(&layers_names_raw)
@@ -159,7 +159,7 @@ pub unsafe fn create_instance(
         .expect("Instance creation error");
 
     if DEBUG_ENABLED {
-        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
                     | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
@@ -201,15 +201,14 @@ pub unsafe fn create_device(
         found_decode_queue = false;
 
         let mut video_queue_family_properties = vk::QueueFamilyVideoPropertiesKHR::default();
-        let mut queue_family_properties = Vec::new();
-        queue_family_properties.resize_with(
-            instance.get_physical_device_queue_family_properties2_len(pdevice),
-            || {
-                vk::QueueFamilyProperties2::builder()
-                    .push_next(&mut video_queue_family_properties)
-                    .build()
-            },
-        );
+        
+        let queue_family_properties_count = instance.get_physical_device_queue_family_properties2_len(pdevice);
+
+        assert_eq!(queue_family_properties_count, 1);
+
+            let mut queue_family_properties = vec![vk::QueueFamilyProperties2::default()
+                .push_next(&mut video_queue_family_properties)];
+
         instance
             .get_physical_device_queue_family_properties2(pdevice, &mut queue_family_properties);
 
@@ -223,7 +222,7 @@ pub unsafe fn create_device(
             {
                 if video_queue_family_properties
                     .video_codec_operations
-                    .contains(vk::VideoCodecOperationFlagsKHR::DECODE_H265_EXT)
+                    .contains(vk::VideoCodecOperationFlagsKHR::DECODE_H264)
                     // Nvidia driver bug
                     || video_queue_family_properties
                     .video_codec_operations
@@ -273,6 +272,39 @@ pub unsafe fn create_device(
         app_data.grapgics_queue_family_index
     );
 
+
+    let mut profile_usage_info = vk::VideoDecodeUsageInfoKHR::default();
+    // .video_usage_hints( vk::VideoDecodeUsageFlagsKHR::DEFAULT)
+    // .build();
+
+    let profile_info = vk::VideoProfileInfoKHR::default()
+    .push_next(&mut profile_usage_info)
+    .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
+    .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
+    .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8);
+
+    let mut decode_capapitilied = vk::VideoDecodeCapabilitiesKHR::default();
+
+    let capabilities = vk::VideoCapabilitiesKHR::default()
+    .push_next(&mut decode_capapitilied);
+
+
+    //  let handle = instance.handle();
+
+    // let video_queue_loader = KhrVideoQueueFn::load(|name| {
+    //     std::mem::transmute(entry.get_instance_proc_addr(handle, name.as_ptr()))
+    // });
+
+
+
+
+    
+
+
+	//video_queue_fps.get_physical_device_video_capabilities_khr(pdevices, &mut profile_info, &mut capabilities);  
+
+
+
     let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
     let features = vk::PhysicalDeviceFeatures {
         shader_clip_distance: 1,
@@ -280,19 +312,17 @@ pub unsafe fn create_device(
     };
     let priorities = [0.0];
 
-    let graphics_queue_info = vk::DeviceQueueCreateInfo::builder()
+    let graphics_queue_info = vk::DeviceQueueCreateInfo::default()
         .queue_family_index(app_data.grapgics_queue_family_index)
-        .queue_priorities(&priorities)
-        .build();
+        .queue_priorities(&priorities);
 
-    let decode_queue_info = vk::DeviceQueueCreateInfo::builder()
+    let decode_queue_info = vk::DeviceQueueCreateInfo::default()
         .queue_family_index(app_data.decode_queue_family_index)
-        .queue_priorities(&priorities)
-        .build();
+        .queue_priorities(&priorities);
 
     let queue_infos = [graphics_queue_info, decode_queue_info];
 
-    let device_create_info = vk::DeviceCreateInfo::builder()
+    let device_create_info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queue_infos)
         .enabled_extension_names(&device_extension_names_raw)
         .enabled_features(&features);
