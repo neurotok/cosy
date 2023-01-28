@@ -36,7 +36,6 @@ impl Default for VideoSpec {
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
-
     let mut file = std::fs::File::open({
         if DEBUG_ENABLED {
             "/home/marcin/git/cozy/samples/Big_Buck_Bunny_360_10s_1MB.mp4"

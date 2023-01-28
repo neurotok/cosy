@@ -200,13 +200,15 @@ pub unsafe fn create_device(
         found_graphics_queue = false;
         found_decode_queue = false;
 
-        let needed_video_codec_op = vk::VideoCodecOperationFlagsKHR::DECODE_H264_EXT;
-        
+        let mut video_queue_family_properties = vk::QueueFamilyVideoPropertiesKHR::default();
         let mut queue_family_properties = Vec::new();
         queue_family_properties.resize_with(
-            instance
-                .get_physical_device_queue_family_properties2_len(pdevice),
-            || vk::QueueFamilyProperties2::default(),
+            instance.get_physical_device_queue_family_properties2_len(pdevice),
+            || {
+                vk::QueueFamilyProperties2::builder()
+                    .push_next(&mut video_queue_family_properties)
+                    .build()
+            },
         );
         instance
             .get_physical_device_queue_family_properties2(pdevice, &mut queue_family_properties);
@@ -214,17 +216,22 @@ pub unsafe fn create_device(
         for j in 0..queue_family_properties.len() {
             let queue_family_property = queue_family_properties[j];
 
-
-            if queue_family_property.queue_family_properties
+            if queue_family_property
+                .queue_family_properties
                 .queue_flags
                 .contains(vk::QueueFlags::VIDEO_DECODE_KHR)
             {
-
-                found_decode_queue = true;
-                app_data.decode_queue_family_index = j as u32;
+                if video_queue_family_properties
+                    .video_codec_operations
+                    .contains(vk::VideoCodecOperationFlagsKHR::DECODE_H265_EXT)
+                {
+                    found_decode_queue = true;
+                    app_data.decode_queue_family_index = j as u32;
+                }
             }
 
-            if queue_family_property.queue_family_properties
+            if queue_family_property
+                .queue_family_properties
                 .queue_flags
                 .contains(vk::QueueFlags::GRAPHICS)
                 && surface_loader
