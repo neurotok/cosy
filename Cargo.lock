@@ -49,10 +49,12 @@ checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
 [[package]]
 name = "ash"
 version = "0.37.0+1.3.238"
+source = "git+https://github.com/neurotok/ash.git#daa9ed2ff4bfd827bbf02550006c472d0c4dfe0d"
 
 [[package]]
 name = "ash-window"
 version = "0.11.0"
+source = "git+https://github.com/neurotok/ash.git#daa9ed2ff4bfd827bbf02550006c472d0c4dfe0d"
 dependencies = [
  "ash",
  "raw-window-handle 0.5.0",

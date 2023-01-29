@@ -209,8 +209,7 @@ pub unsafe fn create_device(
             vec![vk::QueueFamilyProperties2::default(); queue_family_properties_count];
 
         for j in 0..queue_family_properties_count {
-            //push_next only making copy of video_queue_family_properties[j]
-            //queue_family_properties[j].push_next(&mut video_queue_family_properties[j]);
+            //push_next only implemented for struct builders
             queue_family_properties[j].p_next =
                 &mut video_queue_family_properties[j] as *mut _ as _;
         }
