@@ -3,7 +3,7 @@ use ash::{
         ext::DebugUtils,
         khr::{Surface, Swapchain, VideoQueue},
     },
-    vk::KhrVideoQueueFn,
+    vk::{native::StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN, KhrVideoQueueFn},
 };
 
 use ash::{vk, Entry};
@@ -274,24 +274,32 @@ pub unsafe fn create_device(
         app_data.grapgics_queue_family_index
     );
 
-    let mut profile_usage_info = vk::VideoDecodeUsageInfoKHR::default()
-    .video_usage_hints(vk::VideoDecodeUsageFlagsKHR::DEFAULT);
+    let mut video_profile_operation = vk::VideoDecodeH264ProfileInfoKHR::default()
+        .std_profile_idc(StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN)
+        .picture_layout(vk::VideoDecodeH264PictureLayoutFlagsKHR::PROGRESSIVE);
 
     let profile_info = vk::VideoProfileInfoKHR::default()
-        .push_next(&mut profile_usage_info)
+        .push_next(&mut video_profile_operation)
         .video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_H264)
         .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
         .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
         .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8);
 
-    let mut decode_capapitilied = vk::VideoDecodeCapabilitiesKHR::default();
+    let mut h264_decode_capibilities = vk::VideoDecodeH264CapabilitiesKHR::default();
 
-    let mut capabilities = vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capapitilied);
+    let mut decode_capabilities = vk::VideoDecodeCapabilitiesKHR::default();
+    // TODO no p_next or push_next motheods yet this is failing when not passed
+    decode_capabilities.p_next = &mut h264_decode_capibilities as *mut _ as _;
+
+    let mut capabilities = vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capabilities);
 
     let video_queue_loader = VideoQueue::new(entry, instance);
 
-    video_queue_loader
-        .get_physical_device_video_capabilities_khr(app_data.physical_device, &profile_info, &mut capabilities)?;
+    video_queue_loader.get_physical_device_video_capabilities_khr(
+        app_data.physical_device,
+        &profile_info,
+        &mut capabilities,
+    )?;
 
     let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
     let features = vk::PhysicalDeviceFeatures {
