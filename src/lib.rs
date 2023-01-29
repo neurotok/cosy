@@ -15,9 +15,9 @@ use anyhow::{anyhow, Result};
 
 use winit;
 
-use std::{borrow::Cow, rc::Rc};
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::{borrow::Cow, rc::Rc};
 
 pub const DEBUG_ENABLED: bool = cfg!(debug_assertions);
 
@@ -200,31 +200,35 @@ pub unsafe fn create_device(
         found_graphics_queue = false;
         found_decode_queue = false;
 
-        let mut video_queue_family_properties = vk::QueueFamilyVideoPropertiesKHR::default();
-        
-        let queue_family_properties_count = instance.get_physical_device_queue_family_properties2_len(pdevice);
+        let queue_family_properties_count =
+            instance.get_physical_device_queue_family_properties2_len(pdevice);
 
-        assert_eq!(queue_family_properties_count, 1);
+        let mut video_queue_family_properties =
+            vec![vk::QueueFamilyVideoPropertiesKHR::default(); queue_family_properties_count];
+        let mut queue_family_properties =
+            vec![vk::QueueFamilyProperties2::default(); queue_family_properties_count];
 
-            let mut queue_family_properties = vec![vk::QueueFamilyProperties2::default()
-                .push_next(&mut video_queue_family_properties)];
+        for j in 0..queue_family_properties_count {
+            queue_family_properties[j].push_next(&mut video_queue_family_properties[j]);
+        }
 
         instance
             .get_physical_device_queue_family_properties2(pdevice, &mut queue_family_properties);
 
         for j in 0..queue_family_properties.len() {
             let queue_family_property = queue_family_properties[j];
+            let video_queue_family_property = video_queue_family_properties[j];
 
             if queue_family_property
                 .queue_family_properties
                 .queue_flags
                 .contains(vk::QueueFlags::VIDEO_DECODE_KHR)
             {
-                if video_queue_family_properties
+                if video_queue_family_property
                     .video_codec_operations
                     .contains(vk::VideoCodecOperationFlagsKHR::DECODE_H264)
                     // Nvidia driver bug
-                    || video_queue_family_properties
+                    || video_queue_family_property
                     .video_codec_operations
                     .contains(std::mem::transmute::<u32, vk::VideoCodecOperationFlagsKHR>(0x10000))
                 {
@@ -272,22 +276,19 @@ pub unsafe fn create_device(
         app_data.grapgics_queue_family_index
     );
 
-
     let mut profile_usage_info = vk::VideoDecodeUsageInfoKHR::default();
     // .video_usage_hints( vk::VideoDecodeUsageFlagsKHR::DEFAULT)
     // .build();
 
     let profile_info = vk::VideoProfileInfoKHR::default()
-    .push_next(&mut profile_usage_info)
-    .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
-    .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
-    .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8);
+        .push_next(&mut profile_usage_info)
+        .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
+        .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
+        .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8);
 
     let mut decode_capapitilied = vk::VideoDecodeCapabilitiesKHR::default();
 
-    let capabilities = vk::VideoCapabilitiesKHR::default()
-    .push_next(&mut decode_capapitilied);
-
+    let capabilities = vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capapitilied);
 
     //  let handle = instance.handle();
 
@@ -295,15 +296,7 @@ pub unsafe fn create_device(
     //     std::mem::transmute(entry.get_instance_proc_addr(handle, name.as_ptr()))
     // });
 
-
-
-
-    
-
-
-	//video_queue_fps.get_physical_device_video_capabilities_khr(pdevices, &mut profile_info, &mut capabilities);  
-
-
+    //video_queue_fps.get_physical_device_video_capabilities_khr(pdevices, &mut profile_info, &mut capabilities);
 
     let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
     let features = vk::PhysicalDeviceFeatures {
