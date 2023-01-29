@@ -274,17 +274,24 @@ pub unsafe fn create_device(
         app_data.grapgics_queue_family_index
     );
 
-    let mut profile_usage_info = vk::VideoDecodeUsageInfoKHR::default();
+    let mut profile_usage_info = vk::VideoDecodeUsageInfoKHR::default()
+    .video_usage_hints(vk::VideoDecodeUsageFlagsKHR::DEFAULT);
 
     let profile_info = vk::VideoProfileInfoKHR::default()
         .push_next(&mut profile_usage_info)
+        .video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_H264)
         .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
         .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
         .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8);
 
     let mut decode_capapitilied = vk::VideoDecodeCapabilitiesKHR::default();
 
-    let capabilities = vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capapitilied);
+    let mut capabilities = vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capapitilied);
+
+    let video_queue_loader = VideoQueue::new(entry, instance);
+
+    video_queue_loader
+        .get_physical_device_video_capabilities_khr(app_data.physical_device, &profile_info, &mut capabilities)?;
 
     let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
     let features = vk::PhysicalDeviceFeatures {

@@ -38,7 +38,7 @@ fn main() -> Result<()> {
 
     let mut file = std::fs::File::open({
         if DEBUG_ENABLED {
-            "/home/marcin/git/cozy/samples/Big_Buck_Bunny_360_10s_1MB.mp4"
+            "./samples/Big_Buck_Bunny_360_10s_1MB.mp4"
         } else {
             &args[1]
         }
