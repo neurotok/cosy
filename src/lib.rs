@@ -301,6 +301,14 @@ pub unsafe fn create_device(
         &mut capabilities,
     )?;
 
+    let profiles = vec![profile_info];
+
+    let mut profile_list_info = vk::VideoProfileListInfoKHR::default()
+        .profiles(&profiles);
+
+    let format_info = vk::PhysicalDeviceVideoFormatInfoKHR::default()
+    .push_next(&mut profile_list_info);
+
     let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
     let features = vk::PhysicalDeviceFeatures {
         shader_clip_distance: 1,
