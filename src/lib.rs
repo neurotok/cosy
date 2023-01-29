@@ -309,6 +309,12 @@ pub unsafe fn create_device(
     let format_info = vk::PhysicalDeviceVideoFormatInfoKHR::default()
     .push_next(&mut profile_list_info);
 
+    let format_properties_count = video_queue_loader.get_physical_device_video_format_properties_khr_len(app_data.physical_device, &format_info);
+
+    let mut format_properties = vec![vk::VideoFormatPropertiesKHR::default(); format_properties_count];
+
+    video_queue_loader.get_physical_device_video_format_properties_khr(app_data.physical_device, &format_info, &mut format_properties)?;
+
     let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
     let features = vk::PhysicalDeviceFeatures {
         shader_clip_distance: 1,
