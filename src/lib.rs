@@ -305,7 +305,9 @@ pub unsafe fn create_device(
     let mut profile_list_info = vk::VideoProfileListInfoKHR::default().profiles(&profiles);
 
     let format_info =
-        vk::PhysicalDeviceVideoFormatInfoKHR::default().push_next(&mut profile_list_info);
+        vk::PhysicalDeviceVideoFormatInfoKHR::default().push_next(&mut profile_list_info).image_usage(
+            vk::ImageUsageFlags::VIDEO_DECODE_SRC_KHR
+        );
 
     let format_properties_count = video_queue_loader
         .get_physical_device_video_format_properties_khr_len(
@@ -316,7 +318,7 @@ pub unsafe fn create_device(
     let mut format_properties =
         vec![vk::VideoFormatPropertiesKHR::default(); format_properties_count];
 
-    //video_queue_loader.get_physical_device_video_format_properties_khr(app_data.physical_device, &format_info, &mut format_properties)?;
+    video_queue_loader.get_physical_device_video_format_properties_khr(app_data.physical_device, &format_info, &mut format_properties)?;
 
     let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
     let features = vk::PhysicalDeviceFeatures {
