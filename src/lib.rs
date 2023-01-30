@@ -86,6 +86,15 @@ impl App {
         Ok(())
     }
     pub unsafe fn destroy(&mut self) {
+        self.device.device_wait_idle().unwrap();
+
+        let surface_loader = Surface::new(&self.entry, &self.instance);
+        surface_loader.destroy_surface(self.app_data.surface, None);
+
+        let debug_utils_loader = DebugUtils::new(&self.entry, &self.instance);
+        debug_utils_loader.destroy_debug_utils_messenger(self.app_data.debug_call_back, None);
+
+        self.device.destroy_device(None);
         self.instance.destroy_instance(None);
     }
 }
@@ -98,16 +107,6 @@ pub struct AppData {
     pub grapgics_queue_family_index: u32,
     pub decode_queue_family_index: u32,
     pub graphics_queue: vk::Queue,
-}
-
-impl Drop for App {
-    fn drop(&mut self) {
-        unsafe {
-            self.device.device_wait_idle().unwrap();
-            self.device.destroy_device(None);
-            self.instance.destroy_instance(None);
-        }
-    }
 }
 
 pub unsafe fn create_instance(
@@ -303,17 +302,21 @@ pub unsafe fn create_device(
 
     let profiles = vec![profile_info];
 
-    let mut profile_list_info = vk::VideoProfileListInfoKHR::default()
-        .profiles(&profiles);
+    let mut profile_list_info = vk::VideoProfileListInfoKHR::default().profiles(&profiles);
 
-    let format_info = vk::PhysicalDeviceVideoFormatInfoKHR::default()
-    .push_next(&mut profile_list_info);
+    let format_info =
+        vk::PhysicalDeviceVideoFormatInfoKHR::default().push_next(&mut profile_list_info);
 
-    let format_properties_count = video_queue_loader.get_physical_device_video_format_properties_khr_len(app_data.physical_device, &format_info);
+    let format_properties_count = video_queue_loader
+        .get_physical_device_video_format_properties_khr_len(
+            app_data.physical_device,
+            &format_info,
+        );
 
-    let mut format_properties = vec![vk::VideoFormatPropertiesKHR::default(); format_properties_count];
+    let mut format_properties =
+        vec![vk::VideoFormatPropertiesKHR::default(); format_properties_count];
 
-    video_queue_loader.get_physical_device_video_format_properties_khr(app_data.physical_device, &format_info, &mut format_properties)?;
+    //video_queue_loader.get_physical_device_video_format_properties_khr(app_data.physical_device, &format_info, &mut format_properties)?;
 
     let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
     let features = vk::PhysicalDeviceFeatures {
