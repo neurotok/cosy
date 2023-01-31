@@ -115,7 +115,8 @@ fn main() -> Result<()> {
         .build(&event_loop)
         .unwrap();
 
-    let mut app = unsafe { App::create(&window, video_spec.width as u32, video_spec.height as u32)? };
+    let mut app =
+        unsafe { App::create(&window, video_spec.width as u32, video_spec.height as u32)? };
 
     let mut destroying = false;
     event_loop.run(move |event, _, control_flow| {
