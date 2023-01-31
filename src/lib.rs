@@ -3,7 +3,7 @@ use ash::{
         ext::DebugUtils,
         khr::{Surface, Swapchain, VideoQueue},
     },
-    vk::{native::StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN, KhrVideoQueueFn},
+    vk::{native::StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN, KhrVideoQueueFn, SwapchainKHR},
 };
 
 use ash::{vk, Entry};
@@ -55,6 +55,7 @@ pub struct App {
     app_data: AppData,
     instance: Instance,
     device: Device,
+    graphics_swapchain: SwapchainKHR,
 }
 
 impl App {
@@ -75,11 +76,14 @@ impl App {
 
         let device = create_device(&instance, &entry, &mut app_data)?;
 
+        let graphics_swapchain = create_graphics_swapchain(&instance, &device, &entry, &mut app_data)?;
+
         Ok(Self {
             entry,
             app_data,
             instance,
             device,
+            graphics_swapchain,
         })
     }
     pub unsafe fn render(&mut self, window: &winit::window::Window) -> Result<()> {
@@ -87,6 +91,9 @@ impl App {
     }
     pub unsafe fn destroy(&mut self) {
         self.device.device_wait_idle().unwrap();
+
+        let swapchain_loader = Swapchain::new(&self.instance, &self.device);
+        swapchain_loader.destroy_swapchain(self.graphics_swapchain, None);
 
         let surface_loader = Surface::new(&self.entry, &self.instance);
         surface_loader.destroy_surface(self.app_data.surface, None);
@@ -104,9 +111,11 @@ pub struct AppData {
     pub debug_call_back: vk::DebugUtilsMessengerEXT,
     pub surface: vk::SurfaceKHR,
     pub physical_device: vk::PhysicalDevice,
-    pub grapgics_queue_family_index: u32,
+    pub graphics_queue_family_index: u32,
     pub decode_queue_family_index: u32,
     pub graphics_queue: vk::Queue,
+    pub window_width: u32,
+    pub window_height: u32,
 }
 
 pub unsafe fn create_instance(
@@ -188,6 +197,7 @@ pub unsafe fn create_device(
     let pdevices = instance
         .enumerate_physical_devices()
         .expect("Physical device error");
+
     let surface_loader = Surface::new(&entry, &instance);
 
     let mut found_graphics_queue = false;
@@ -243,7 +253,7 @@ pub unsafe fn create_device(
                     .unwrap()
             {
                 found_graphics_queue = true;
-                app_data.grapgics_queue_family_index = k as u32;
+                app_data.graphics_queue_family_index = k as u32;
             }
         }
 
@@ -270,8 +280,117 @@ pub unsafe fn create_device(
     );
     println!(
         "Graphics queue family index: {:?}",
-        app_data.grapgics_queue_family_index
+        app_data.graphics_queue_family_index
     );
+
+    let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
+    let features = vk::PhysicalDeviceFeatures {
+        shader_clip_distance: 1,
+        ..Default::default()
+    };
+    let priorities = [0.0];
+
+    let graphics_queue_info = vk::DeviceQueueCreateInfo::default()
+        .queue_family_index(app_data.graphics_queue_family_index)
+        .queue_priorities(&priorities);
+
+    let decode_queue_info = vk::DeviceQueueCreateInfo::default()
+        .queue_family_index(app_data.decode_queue_family_index)
+        .queue_priorities(&priorities);
+
+    let queue_infos = [graphics_queue_info, decode_queue_info];
+
+    let device_create_info = vk::DeviceCreateInfo::default()
+        .queue_create_infos(&queue_infos)
+        .enabled_extension_names(&device_extension_names_raw)
+        .enabled_features(&features);
+
+    let device: Device = instance
+        .create_device(app_data.physical_device, &device_create_info, None)
+        .unwrap();
+
+    Ok(device)
+}
+
+pub unsafe fn create_graphics_swapchain(
+    instance: &Instance,
+    device: &Device,
+    entry: &Entry,
+    app_data: &mut AppData,
+) -> Result<SwapchainKHR> {
+    let present_queue = device.get_device_queue(app_data.graphics_queue_family_index, 0);
+
+    let surface_loader = Surface::new(&entry, &instance);
+
+    let surface_format = surface_loader
+        .get_physical_device_surface_formats(app_data.physical_device, app_data.surface)
+        .unwrap()[0];
+
+    let surface_capabilities = surface_loader
+        .get_physical_device_surface_capabilities(app_data.physical_device, app_data.surface)
+        .unwrap();
+    let mut desired_image_count = surface_capabilities.min_image_count + 1;
+    if surface_capabilities.max_image_count > 0
+        && desired_image_count > surface_capabilities.max_image_count
+    {
+        desired_image_count = surface_capabilities.max_image_count;
+    }
+
+    app_data.window_width = 800;
+    app_data.window_height = 600;
+
+    let surface_resolution = match surface_capabilities.current_extent.width {
+        std::u32::MAX => vk::Extent2D {
+            width: app_data.window_width,
+            height: app_data.window_height,
+        },
+        _ => surface_capabilities.current_extent,
+    };
+    let pre_transform = if surface_capabilities
+        .supported_transforms
+        .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
+    {
+        vk::SurfaceTransformFlagsKHR::IDENTITY
+    } else {
+        surface_capabilities.current_transform
+    };
+    let present_modes = surface_loader
+        .get_physical_device_surface_present_modes(app_data.physical_device, app_data.surface)
+        .unwrap();
+    let present_mode = present_modes
+        .iter()
+        .cloned()
+        .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
+        .unwrap_or(vk::PresentModeKHR::FIFO);
+
+
+    let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
+        .surface(app_data.surface)
+        .min_image_count(desired_image_count)
+        .image_color_space(surface_format.color_space)
+        .image_format(surface_format.format)
+        .image_extent(surface_resolution)
+        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+        .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .pre_transform(pre_transform)
+        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+        .present_mode(present_mode)
+        .clipped(true)
+        .image_array_layers(1);
+    
+    let swapchain_loader = Swapchain::new(&instance, &device);
+
+    let swapchain = swapchain_loader
+        .create_swapchain(&swapchain_create_info, None)?;
+
+    Ok(swapchain)
+}
+
+pub unsafe fn create_h264_video_decode_profile_list(
+    instance: &Instance,
+    entry: &Entry,
+    app_data: &mut AppData,
+) {
 
     let mut video_profile_operation = vk::VideoDecodeH264ProfileInfoKHR::default()
         .std_profile_idc(StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN)
@@ -298,16 +417,17 @@ pub unsafe fn create_device(
         app_data.physical_device,
         &profile_info,
         &mut capabilities,
-    )?;
+    ).unwrap();
+    //)?;
 
     let profiles = vec![profile_info];
 
     let mut profile_list_info = vk::VideoProfileListInfoKHR::default().profiles(&profiles);
 
     let format_info =
-        vk::PhysicalDeviceVideoFormatInfoKHR::default().push_next(&mut profile_list_info).image_usage(
-            vk::ImageUsageFlags::VIDEO_DECODE_SRC_KHR
-        );
+        vk::PhysicalDeviceVideoFormatInfoKHR::default()
+        .push_next(&mut profile_list_info)
+        .image_usage(vk::ImageUsageFlags::VIDEO_DECODE_DST_KHR);
 
     let format_properties_count = video_queue_loader
         .get_physical_device_video_format_properties_khr_len(
@@ -318,33 +438,10 @@ pub unsafe fn create_device(
     let mut format_properties =
         vec![vk::VideoFormatPropertiesKHR::default(); format_properties_count];
 
-    video_queue_loader.get_physical_device_video_format_properties_khr(app_data.physical_device, &format_info, &mut format_properties)?;
+    video_queue_loader.get_physical_device_video_format_properties_khr(app_data.physical_device, &format_info, &mut format_properties
+    //)?;
+    ).unwrap();
 
-    let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
-    let features = vk::PhysicalDeviceFeatures {
-        shader_clip_distance: 1,
-        ..Default::default()
-    };
-    let priorities = [0.0];
-
-    let graphics_queue_info = vk::DeviceQueueCreateInfo::default()
-        .queue_family_index(app_data.grapgics_queue_family_index)
-        .queue_priorities(&priorities);
-
-    let decode_queue_info = vk::DeviceQueueCreateInfo::default()
-        .queue_family_index(app_data.decode_queue_family_index)
-        .queue_priorities(&priorities);
-
-    let queue_infos = [graphics_queue_info, decode_queue_info];
-
-    let device_create_info = vk::DeviceCreateInfo::default()
-        .queue_create_infos(&queue_infos)
-        .enabled_extension_names(&device_extension_names_raw)
-        .enabled_features(&features);
-
-    let device: Device = instance
-        .create_device(app_data.physical_device, &device_create_info, None)
-        .unwrap();
-
-    Ok(device)
 }
+
+
