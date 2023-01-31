@@ -9,6 +9,7 @@ edition = "2021"
 anyhow = "1.0.68"
 ash = {package = "ash", git = "https://github.com/neurotok/ash.git", default-features = false, features = ["linked", "debug"] }
 ash-window = {package = "ash-window", git = "https://github.com/neurotok/ash.git"}
+image = "0.24.5"
 mp4parse = "0.12.0"
 raw-window-handle = "0.5.0"
 winit = "0.27.5"
