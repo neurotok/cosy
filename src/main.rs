@@ -110,12 +110,12 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new();
 
     let window = WindowBuilder::new()
-        .with_title("Cosy player")
+        .with_title("Cozy player")
         .with_inner_size(winit::dpi::LogicalSize::new(f64::from(800), f64::from(600)))
         .build(&event_loop)
         .unwrap();
 
-    let mut app = unsafe { App::create(&window)? };
+    let mut app = unsafe { App::create(&window, video_spec.width as u32, video_spec.height as u32)? };
 
     let mut destroying = false;
     event_loop.run(move |event, _, control_flow| {

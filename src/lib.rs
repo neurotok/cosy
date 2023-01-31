@@ -55,14 +55,14 @@ pub struct App {
     app_data: AppData,
     instance: Instance,
     device: Device,
-    graphics_swapchain: SwapchainKHR,
+    swapchain: SwapchainKHR,
 }
 
 impl App {
-    pub unsafe fn create(window: &winit::window::Window) -> Result<Self> {
+    pub unsafe fn create(window: &winit::window::Window, window_width: u32, window_height: u32) -> Result<Self> {
         let entry = Entry::linked();
 
-        let mut app_data = AppData::default();
+        let mut app_data = AppData::new(window_width, window_height);
 
         let instance = create_instance(window, &entry, &mut app_data)?;
 
@@ -76,14 +76,14 @@ impl App {
 
         let device = create_device(&instance, &entry, &mut app_data)?;
 
-        let graphics_swapchain = create_graphics_swapchain(&instance, &device, &entry, &mut app_data)?;
+        let swapchain = create_swapchain(&instance, &device, &entry, &mut app_data)?;
 
         Ok(Self {
             entry,
             app_data,
             instance,
             device,
-            graphics_swapchain,
+            swapchain,
         })
     }
     pub unsafe fn render(&mut self, window: &winit::window::Window) -> Result<()> {
@@ -93,7 +93,7 @@ impl App {
         self.device.device_wait_idle().unwrap();
 
         let swapchain_loader = Swapchain::new(&self.instance, &self.device);
-        swapchain_loader.destroy_swapchain(self.graphics_swapchain, None);
+        swapchain_loader.destroy_swapchain(self.swapchain, None);
 
         let surface_loader = Surface::new(&self.entry, &self.instance);
         surface_loader.destroy_surface(self.app_data.surface, None);
@@ -114,8 +114,19 @@ pub struct AppData {
     pub graphics_queue_family_index: u32,
     pub decode_queue_family_index: u32,
     pub graphics_queue: vk::Queue,
+    pub present_queue: vk::Queue,
     pub window_width: u32,
     pub window_height: u32,
+}
+
+impl AppData {
+    fn new(window_width: u32, window_height: u32) -> Self {
+        Self {
+            window_width,
+            window_height,
+            ..Default::default()
+        }
+    }
 }
 
 pub unsafe fn create_instance(
@@ -312,13 +323,13 @@ pub unsafe fn create_device(
     Ok(device)
 }
 
-pub unsafe fn create_graphics_swapchain(
+pub unsafe fn create_swapchain(
     instance: &Instance,
     device: &Device,
     entry: &Entry,
     app_data: &mut AppData,
 ) -> Result<SwapchainKHR> {
-    let present_queue = device.get_device_queue(app_data.graphics_queue_family_index, 0);
+    app_data.present_queue = device.get_device_queue(app_data.graphics_queue_family_index, 0);
 
     let surface_loader = Surface::new(&entry, &instance);
 
