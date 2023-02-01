@@ -248,7 +248,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cosy"
+name = "cozy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
