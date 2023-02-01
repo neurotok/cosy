@@ -17,15 +17,15 @@ use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use anyhow::{anyhow, Result};
 
 use winit::{
-    event::{Event, WindowEvent, KeyboardInput, ElementState, VirtualKeyCode},
-    event_loop::{ControlFlow, EventLoop, self},
-    window::WindowBuilder, platform::run_return::EventLoopExtRunReturn,
+    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    platform::run_return::EventLoopExtRunReturn,
+    window::WindowBuilder,
 };
 
-use std::{borrow::Cow, cell::RefCell};
 use std::ffi::CStr;
-use std::mem::{self, align_of};
 use std::os::raw::c_char;
+use std::{borrow::Cow, cell::RefCell};
 
 pub const DEBUG_ENABLED: bool = cfg!(debug_assertions);
 
@@ -95,22 +95,22 @@ pub fn record_submit_commandbuffer<F: FnOnce(&Device, vk::CommandBuffer)>(
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     message_type: vk::DebugUtilsMessageTypeFlagsEXT,
-    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
-    _user_data: *mut std::os::raw::c_void,
+    p_callback_self: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _user_self: *mut std::os::raw::c_void,
 ) -> vk::Bool32 {
-    let callback_data = *p_callback_data;
-    let message_id_number = callback_data.message_id_number;
+    let callback_self = *p_callback_self;
+    let message_id_number = callback_self.message_id_number;
 
-    let message_id_name = if callback_data.p_message_id_name.is_null() {
+    let message_id_name = if callback_self.p_message_id_name.is_null() {
         Cow::from("")
     } else {
-        CStr::from_ptr(callback_data.p_message_id_name).to_string_lossy()
+        CStr::from_ptr(callback_self.p_message_id_name).to_string_lossy()
     };
 
-    let message = if callback_data.p_message.is_null() {
+    let message = if callback_self.p_message.is_null() {
         Cow::from("")
     } else {
-        CStr::from_ptr(callback_data.p_message).to_string_lossy()
+        CStr::from_ptr(callback_self.p_message).to_string_lossy()
     };
 
     println!(
@@ -137,7 +137,7 @@ pub fn find_memorytype_index(
 }
 
 pub struct App {
-    pub event_loop:RefCell<EventLoop<()>>,
+    pub event_loop: RefCell<EventLoop<()>>,
     pub window: winit::window::Window,
     pub entry: Entry,
     pub data: AppData,
@@ -146,23 +146,22 @@ pub struct App {
 }
 
 impl App {
-    pub unsafe fn create(
-        window_width: u32,
-        window_height: u32,
-    ) -> Result<Self> {
-
+    pub unsafe fn create(window_width: u32, window_height: u32) -> Result<Self> {
         let event_loop = EventLoop::new();
 
         let window = WindowBuilder::new()
             .with_title("Cozy player")
-            .with_inner_size(winit::dpi::LogicalSize::new(f64::from(window_width), f64::from(window_height)))
+            .with_inner_size(winit::dpi::LogicalSize::new(
+                f64::from(window_width),
+                f64::from(window_height),
+            ))
             .build(&event_loop)?;
 
         let entry = Entry::linked();
 
         let mut data = AppData::new(window_width, window_height);
 
-        let instance = create_instance(&window, &entry, &mut data)?;
+        let instance = data.create_instance(&window, &entry)?;
 
         data.surface = ash_window::create_surface(
             &entry,
@@ -172,18 +171,17 @@ impl App {
             None,
         )?;
 
-        let device = create_device(&instance, &entry, &mut data)?;
+        let device = data.create_device(&instance, &entry)?;
 
-        data.swapchain = create_swapchain(&instance, &device, &entry, &mut data)?;
-        data.swapchain_image_views = create_swapchain_image_views(&instance, &device, &mut data)?;
+        data.create_swapchain(&instance, &device, &entry)?;
+        data.create_swapchain_image_views(&instance, &device)?;
 
         data.device_memory_properties =
             instance.get_physical_device_memory_properties(data.physical_device);
 
-        create_sync_objects(&device, &mut data);
+        data.create_sync_objects(&device)?;
 
-
-        data.depth_image_view = create_depth_image_view(&instance, &device, &mut data)?;
+        data.create_depth_image_view(&device)?;
 
         Ok(Self {
             event_loop: RefCell::new(event_loop),
@@ -269,7 +267,6 @@ pub struct AppData {
     pub draw_commands_reuse_fence: vk::Fence,
     pub present_complete_semaphore: vk::Semaphore,
     pub rendering_complete_semaphore: vk::Semaphore,
-
 }
 
 impl AppData {
@@ -280,492 +277,484 @@ impl AppData {
             ..Default::default()
         }
     }
-}
 
-pub unsafe fn create_instance(
-    window: &winit::window::Window,
-    entry: &Entry,
-    data: &mut AppData,
-) -> Result<Instance> {
-    let app_name = CStr::from_bytes_with_nul_unchecked(b"VulkanTriangle\0");
+    unsafe fn create_instance(
+        &mut self,
+        window: &winit::window::Window,
+        entry: &Entry,
+    ) -> Result<Instance> {
+        let app_name = CStr::from_bytes_with_nul_unchecked(b"VulkanTriangle\0");
 
-    let layer_names = [CStr::from_bytes_with_nul_unchecked(
-        b"VK_LAYER_KHRONOS_validation\0",
-    )];
+        let layer_names = [CStr::from_bytes_with_nul_unchecked(
+            b"VK_LAYER_KHRONOS_validation\0",
+        )];
 
-    let layers_names_raw: Vec<*const c_char> = if DEBUG_ENABLED {
-        layer_names
-            .iter()
-            .map(|raw_name| raw_name.as_ptr())
-            .collect()
-    } else {
-        Vec::new()
-    };
+        let layers_names_raw: Vec<*const c_char> = if DEBUG_ENABLED {
+            layer_names
+                .iter()
+                .map(|raw_name| raw_name.as_ptr())
+                .collect()
+        } else {
+            Vec::new()
+        };
 
-    let mut extension_names =
-        ash_window::enumerate_required_extensions(window.raw_display_handle())
-            .unwrap()
-            .to_vec();
+        let mut extension_names =
+            ash_window::enumerate_required_extensions(window.raw_display_handle())
+                .unwrap()
+                .to_vec();
 
-    if DEBUG_ENABLED {
-        extension_names.push(DebugUtils::name().as_ptr());
-    }
-
-    let appinfo = vk::ApplicationInfo::default()
-        .application_name(app_name)
-        .application_version(0)
-        .engine_name(app_name)
-        .engine_version(0)
-        .api_version(vk::make_api_version(0, 1, 3, 0));
-
-    let create_flags = vk::InstanceCreateFlags::default();
-
-    let create_info = vk::InstanceCreateInfo::default()
-        .application_info(&appinfo)
-        .enabled_extension_names(&extension_names)
-        .enabled_layer_names(&layers_names_raw)
-        .flags(create_flags);
-
-    let instance: Instance = entry
-        .create_instance(&create_info, None)
-        .expect("Instance creation error");
-
-    if DEBUG_ENABLED {
-        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
-            .message_severity(
-                vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
-            )
-            .message_type(
-                vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
-                    | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
-                    | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
-            )
-            .pfn_user_callback(Some(vulkan_debug_callback));
-
-        let debug_utils_loader = DebugUtils::new(&entry, &instance);
-
-        data.debug_call_back = debug_utils_loader.create_debug_utils_messenger(&debug_info, None)?
-    }
-
-    Ok(instance)
-}
-
-pub unsafe fn create_device(
-    instance: &Instance,
-    entry: &Entry,
-    data: &mut AppData,
-) -> Result<Device> {
-    let pdevices = instance
-        .enumerate_physical_devices()
-        .expect("Physical device error");
-
-    let surface_loader = Surface::new(&entry, &instance);
-
-    let mut found_graphics_queue = false;
-    let mut found_decode_queue = false;
-
-    for i in 0..pdevices.len() {
-        let pdevice = pdevices[i];
-
-        found_graphics_queue = false;
-        found_decode_queue = false;
-
-        let queue_family_properties_count =
-            instance.get_physical_device_queue_family_properties2_len(pdevice);
-
-        let mut video_queue_family_properties =
-            vec![vk::QueueFamilyVideoPropertiesKHR::default(); queue_family_properties_count];
-        let mut queue_family_properties =
-            vec![vk::QueueFamilyProperties2::default(); queue_family_properties_count];
-
-        for j in 0..queue_family_properties_count {
-            //push_next only implemented for struct builders
-            queue_family_properties[j].p_next =
-                &mut video_queue_family_properties[j] as *mut _ as _;
+        if DEBUG_ENABLED {
+            extension_names.push(DebugUtils::name().as_ptr());
         }
 
-        instance
-            .get_physical_device_queue_family_properties2(pdevice, &mut queue_family_properties);
+        let appinfo = vk::ApplicationInfo::default()
+            .application_name(app_name)
+            .application_version(0)
+            .engine_name(app_name)
+            .engine_version(0)
+            .api_version(vk::make_api_version(0, 1, 3, 0));
 
-        for k in 0..queue_family_properties.len() {
-            let queue_family_property = queue_family_properties[k];
-            let video_queue_family_property = video_queue_family_properties[k];
+        let create_flags = vk::InstanceCreateFlags::default();
 
-            if queue_family_property
-                .queue_family_properties
-                .queue_flags
-                .contains(vk::QueueFlags::VIDEO_DECODE_KHR)
-            {
-                if video_queue_family_property
-                    .video_codec_operations
-                    .contains(vk::VideoCodecOperationFlagsKHR::DECODE_H264)
+        let create_info = vk::InstanceCreateInfo::default()
+            .application_info(&appinfo)
+            .enabled_extension_names(&extension_names)
+            .enabled_layer_names(&layers_names_raw)
+            .flags(create_flags);
+
+        let instance: Instance = entry
+            .create_instance(&create_info, None)
+            .expect("Instance creation error");
+
+        if DEBUG_ENABLED {
+            let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
+                .message_severity(
+                    vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                        | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                        | vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
+                )
+                .message_type(
+                    vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                        | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                        | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+                )
+                .pfn_user_callback(Some(vulkan_debug_callback));
+
+            let debug_utils_loader = DebugUtils::new(&entry, &instance);
+
+            self.debug_call_back =
+                debug_utils_loader.create_debug_utils_messenger(&debug_info, None)?
+        }
+
+        Ok(instance)
+    }
+
+    unsafe fn create_device(&mut self, instance: &Instance, entry: &Entry) -> Result<Device> {
+        let pdevices = instance
+            .enumerate_physical_devices()
+            .expect("Physical device error");
+
+        let surface_loader = Surface::new(&entry, &instance);
+
+        let mut found_graphics_queue = false;
+        let mut found_decode_queue = false;
+
+        for i in 0..pdevices.len() {
+            let pdevice = pdevices[i];
+
+            found_graphics_queue = false;
+            found_decode_queue = false;
+
+            let queue_family_properties_count =
+                instance.get_physical_device_queue_family_properties2_len(pdevice);
+
+            let mut video_queue_family_properties =
+                vec![vk::QueueFamilyVideoPropertiesKHR::default(); queue_family_properties_count];
+            let mut queue_family_properties =
+                vec![vk::QueueFamilyProperties2::default(); queue_family_properties_count];
+
+            for j in 0..queue_family_properties_count {
+                //push_next only implemented for struct builders
+                queue_family_properties[j].p_next =
+                    &mut video_queue_family_properties[j] as *mut _ as _;
+            }
+
+            instance.get_physical_device_queue_family_properties2(
+                pdevice,
+                &mut queue_family_properties,
+            );
+
+            for k in 0..queue_family_properties.len() {
+                let queue_family_property = queue_family_properties[k];
+                let video_queue_family_property = video_queue_family_properties[k];
+
+                if queue_family_property
+                    .queue_family_properties
+                    .queue_flags
+                    .contains(vk::QueueFlags::VIDEO_DECODE_KHR)
                 {
-                    found_decode_queue = true;
-                    data.decode_queue_family_index = k as u32;
+                    if video_queue_family_property
+                        .video_codec_operations
+                        .contains(vk::VideoCodecOperationFlagsKHR::DECODE_H264)
+                    {
+                        found_decode_queue = true;
+                        self.decode_queue_family_index = k as u32;
+                    }
+                }
+
+                if queue_family_property
+                    .queue_family_properties
+                    .queue_flags
+                    .contains(vk::QueueFlags::GRAPHICS)
+                    && surface_loader
+                        .get_physical_device_surface_support(pdevice, k as u32, self.surface)
+                        .unwrap()
+                {
+                    found_graphics_queue = true;
+                    self.graphics_queue_family_index = k as u32;
                 }
             }
 
-            if queue_family_property
-                .queue_family_properties
-                .queue_flags
-                .contains(vk::QueueFlags::GRAPHICS)
-                && surface_loader
-                    .get_physical_device_surface_support(pdevice, k as u32, data.surface)
-                    .unwrap()
-            {
-                found_graphics_queue = true;
-                data.graphics_queue_family_index = k as u32;
+            if found_decode_queue && found_graphics_queue {
+                self.physical_device = pdevice;
+                break;
             }
         }
 
-        if found_decode_queue && found_graphics_queue {
-            data.physical_device = pdevice;
-            break;
+        if !found_decode_queue {
+            return Err(anyhow!(
+                "H264 video decode is not supported on this platform"
+            ));
         }
+        if !found_graphics_queue {
+            return Err(anyhow!(
+                "Graphics display is not supported on this platform"
+            ));
+        }
+
+        println!(
+            "Decode queue family index: {:?}",
+            self.decode_queue_family_index
+        );
+        println!(
+            "Graphics queue family index: {:?}",
+            self.graphics_queue_family_index
+        );
+
+        let device_extension_names_raw =
+            [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
+        let features = vk::PhysicalDeviceFeatures {
+            shader_clip_distance: 1,
+            ..Default::default()
+        };
+        let priorities = [0.0];
+
+        let graphics_queue_info = vk::DeviceQueueCreateInfo::default()
+            .queue_family_index(self.graphics_queue_family_index)
+            .queue_priorities(&priorities);
+
+        let decode_queue_info = vk::DeviceQueueCreateInfo::default()
+            .queue_family_index(self.decode_queue_family_index)
+            .queue_priorities(&priorities);
+
+        let queue_infos = [graphics_queue_info, decode_queue_info];
+
+        let device_create_info = vk::DeviceCreateInfo::default()
+            .queue_create_infos(&queue_infos)
+            .enabled_extension_names(&device_extension_names_raw)
+            .enabled_features(&features);
+
+        let device: Device = instance
+            .create_device(self.physical_device, &device_create_info, None)
+            .unwrap();
+
+        Ok(device)
     }
 
-    if !found_decode_queue {
-        return Err(anyhow!(
-            "H264 video decode is not supported on this platform"
-        ));
-    }
-    if !found_graphics_queue {
-        return Err(anyhow!(
-            "Graphics display is not supported on this platform"
-        ));
-    }
+    unsafe fn create_swapchain(
+        &mut self,
+        instance: &Instance,
+        device: &Device,
+        entry: &Entry,
+    ) -> Result<SwapchainKHR> {
+        self.present_queue = device.get_device_queue(self.graphics_queue_family_index, 0);
 
-    println!(
-        "Decode queue family index: {:?}",
-        data.decode_queue_family_index
-    );
-    println!(
-        "Graphics queue family index: {:?}",
-        data.graphics_queue_family_index
-    );
+        let surface_loader = Surface::new(&entry, &instance);
 
-    let device_extension_names_raw = [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
-    let features = vk::PhysicalDeviceFeatures {
-        shader_clip_distance: 1,
-        ..Default::default()
-    };
-    let priorities = [0.0];
+        self.surface_format = surface_loader
+            .get_physical_device_surface_formats(self.physical_device, self.surface)
+            .unwrap()[0];
 
-    let graphics_queue_info = vk::DeviceQueueCreateInfo::default()
-        .queue_family_index(data.graphics_queue_family_index)
-        .queue_priorities(&priorities);
+        let surface_capabilities = surface_loader
+            .get_physical_device_surface_capabilities(self.physical_device, self.surface)
+            .unwrap();
 
-    let decode_queue_info = vk::DeviceQueueCreateInfo::default()
-        .queue_family_index(data.decode_queue_family_index)
-        .queue_priorities(&priorities);
+        let mut desired_image_count = surface_capabilities.min_image_count + 1;
+        if surface_capabilities.max_image_count > 0
+            && desired_image_count > surface_capabilities.max_image_count
+        {
+            desired_image_count = surface_capabilities.max_image_count;
+        }
 
-    let queue_infos = [graphics_queue_info, decode_queue_info];
+        self.surface_resolution = match surface_capabilities.current_extent.width {
+            std::u32::MAX => vk::Extent2D {
+                width: self.window_width,
+                height: self.window_height,
+            },
+            _ => surface_capabilities.current_extent,
+        };
+        let pre_transform = if surface_capabilities
+            .supported_transforms
+            .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
+        {
+            vk::SurfaceTransformFlagsKHR::IDENTITY
+        } else {
+            surface_capabilities.current_transform
+        };
+        let present_modes = surface_loader
+            .get_physical_device_surface_present_modes(self.physical_device, self.surface)?;
 
-    let device_create_info = vk::DeviceCreateInfo::default()
-        .queue_create_infos(&queue_infos)
-        .enabled_extension_names(&device_extension_names_raw)
-        .enabled_features(&features);
+        let present_mode = present_modes
+            .iter()
+            .cloned()
+            .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
+            .unwrap_or(vk::PresentModeKHR::FIFO);
 
-    let device: Device = instance
-        .create_device(data.physical_device, &device_create_info, None)
-        .unwrap();
+        let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
+            .surface(self.surface)
+            .min_image_count(desired_image_count)
+            .image_color_space(self.surface_format.color_space)
+            .image_format(self.surface_format.format)
+            .image_extent(self.surface_resolution)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .pre_transform(pre_transform)
+            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .present_mode(present_mode)
+            .clipped(true)
+            .image_array_layers(1);
 
-    Ok(device)
-}
+        let swapchain_loader = Swapchain::new(&instance, &device);
 
-pub unsafe fn create_swapchain(
-    instance: &Instance,
-    device: &Device,
-    entry: &Entry,
-    data: &mut AppData,
-) -> Result<SwapchainKHR> {
-    data.present_queue = device.get_device_queue(data.graphics_queue_family_index, 0);
+        let swapchain = swapchain_loader.create_swapchain(&swapchain_create_info, None)?;
 
-    let surface_loader = Surface::new(&entry, &instance);
-
-    data.surface_format = surface_loader
-        .get_physical_device_surface_formats(data.physical_device, data.surface)
-        .unwrap()[0];
-
-    let surface_capabilities = surface_loader
-        .get_physical_device_surface_capabilities(data.physical_device, data.surface)
-        .unwrap();
-
-    let mut desired_image_count = surface_capabilities.min_image_count + 1;
-    if surface_capabilities.max_image_count > 0
-        && desired_image_count > surface_capabilities.max_image_count
-    {
-        desired_image_count = surface_capabilities.max_image_count;
+        Ok(swapchain)
     }
 
-    data.surface_resolution = match surface_capabilities.current_extent.width {
-        std::u32::MAX => vk::Extent2D {
-            width: data.window_width,
-            height: data.window_height,
-        },
-        _ => surface_capabilities.current_extent,
-    };
-    let pre_transform = if surface_capabilities
-        .supported_transforms
-        .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
-    {
-        vk::SurfaceTransformFlagsKHR::IDENTITY
-    } else {
-        surface_capabilities.current_transform
-    };
-    let present_modes = surface_loader
-        .get_physical_device_surface_present_modes(data.physical_device, data.surface)?;
+    unsafe fn create_swapchain_image_views(
+        &mut self,
+        instance: &Instance,
+        device: &Device,
+    ) -> Result<Vec<vk::ImageView>> {
+        let pool_create_info = vk::CommandPoolCreateInfo::default()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(self.graphics_queue_family_index);
 
-    let present_mode = present_modes
-        .iter()
-        .cloned()
-        .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
-        .unwrap_or(vk::PresentModeKHR::FIFO);
+        let pool = device.create_command_pool(&pool_create_info, None).unwrap();
 
-    let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
-        .surface(data.surface)
-        .min_image_count(desired_image_count)
-        .image_color_space(data.surface_format.color_space)
-        .image_format(data.surface_format.format)
-        .image_extent(data.surface_resolution)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-        .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .pre_transform(pre_transform)
-        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-        .present_mode(present_mode)
-        .clipped(true)
-        .image_array_layers(1);
+        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
+            .command_buffer_count(2)
+            .command_pool(pool)
+            .level(vk::CommandBufferLevel::PRIMARY);
 
-    let swapchain_loader = Swapchain::new(&instance, &device);
+        let command_buffers = device
+            .allocate_command_buffers(&command_buffer_allocate_info)
+            .unwrap();
+        self.setup_command_buffer = command_buffers[0];
+        self.draw_command_buffer = command_buffers[1];
 
-    let swapchain = swapchain_loader.create_swapchain(&swapchain_create_info, None)?;
+        let swapchain_loader = Swapchain::new(&instance, &device);
 
-    Ok(swapchain)
-}
+        let present_images = swapchain_loader
+            .get_swapchain_images(self.swapchain)
+            .unwrap();
+        let present_image_views: Vec<vk::ImageView> = present_images
+            .iter()
+            .map(|&image| {
+                let create_view_info = vk::ImageViewCreateInfo::default()
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(self.surface_format.format)
+                    .components(vk::ComponentMapping {
+                        r: vk::ComponentSwizzle::R,
+                        g: vk::ComponentSwizzle::G,
+                        b: vk::ComponentSwizzle::B,
+                        a: vk::ComponentSwizzle::A,
+                    })
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .image(image);
+                device.create_image_view(&create_view_info, None).unwrap()
+            })
+            .collect();
+        Ok(present_image_views)
+    }
 
-pub unsafe fn create_swapchain_image_views(
-    instance: &Instance,
-    device: &Device,
-    data: &mut AppData,
-) -> Result<Vec<vk::ImageView>> {
-    let pool_create_info = vk::CommandPoolCreateInfo::default()
-        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-        .queue_family_index(data.graphics_queue_family_index);
+    unsafe fn create_depth_image_view(&mut self, device: &Device) -> Result<vk::ImageView> {
+        let depth_image_create_info = vk::ImageCreateInfo::default()
+            .image_type(vk::ImageType::TYPE_2D)
+            .format(vk::Format::D16_UNORM)
+            .extent(self.surface_resolution.into())
+            .mip_levels(1)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-    let pool = device.create_command_pool(&pool_create_info, None).unwrap();
+        let depth_image = device.create_image(&depth_image_create_info, None).unwrap();
+        let depth_image_memory_req = device.get_image_memory_requirements(depth_image);
+        let depth_image_memory_index = find_memorytype_index(
+            &depth_image_memory_req,
+            &self.device_memory_properties,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        )
+        .expect("Unable to find suitable memory index for depth image.");
 
-    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
-        .command_buffer_count(2)
-        .command_pool(pool)
-        .level(vk::CommandBufferLevel::PRIMARY);
+        let depth_image_allocate_info = vk::MemoryAllocateInfo::default()
+            .allocation_size(depth_image_memory_req.size)
+            .memory_type_index(depth_image_memory_index);
 
-    let command_buffers = device
-        .allocate_command_buffers(&command_buffer_allocate_info)
-        .unwrap();
-    data.setup_command_buffer = command_buffers[0];
-    data.draw_command_buffer = command_buffers[1];
+        let depth_image_memory = device
+            .allocate_memory(&depth_image_allocate_info, None)
+            .unwrap();
 
-    let swapchain_loader = Swapchain::new(&instance, &device);
+        device
+            .bind_image_memory(depth_image, depth_image_memory, 0)
+            .expect("Unable to bind depth image memory");
 
-    let present_images = swapchain_loader
-        .get_swapchain_images(data.swapchain)
-        .unwrap();
-    let present_image_views: Vec<vk::ImageView> = present_images
-        .iter()
-        .map(|&image| {
-            let create_view_info = vk::ImageViewCreateInfo::default()
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(data.surface_format.format)
-                .components(vk::ComponentMapping {
-                    r: vk::ComponentSwizzle::R,
-                    g: vk::ComponentSwizzle::G,
-                    b: vk::ComponentSwizzle::B,
-                    a: vk::ComponentSwizzle::A,
-                })
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .image(image);
-            device.create_image_view(&create_view_info, None).unwrap()
-        })
-        .collect();
-    Ok(present_image_views)
-}
+        record_submit_commandbuffer(
+            &device,
+            self.setup_command_buffer,
+            self.setup_commands_reuse_fence,
+            self.present_queue,
+            &[],
+            &[],
+            &[],
+            |device, setup_command_buffer| {
+                let layout_transition_barriers = vk::ImageMemoryBarrier::default()
+                    .image(depth_image)
+                    .dst_access_mask(
+                        vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                            | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    )
+                    .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                            .layer_count(1)
+                            .level_count(1),
+                    );
 
-pub unsafe fn create_depth_image_view(
-    instance: &Instance,
-    device: &Device,
-    data: &mut AppData,
-) -> Result<vk::ImageView> {
-    let depth_image_create_info = vk::ImageCreateInfo::default()
-        .image_type(vk::ImageType::TYPE_2D)
-        .format(vk::Format::D16_UNORM)
-        .extent(data.surface_resolution.into())
-        .mip_levels(1)
-        .array_layers(1)
-        .samples(vk::SampleCountFlags::TYPE_1)
-        .tiling(vk::ImageTiling::OPTIMAL)
-        .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE);
-
-    let depth_image = device.create_image(&depth_image_create_info, None).unwrap();
-    let depth_image_memory_req = device.get_image_memory_requirements(depth_image);
-    let depth_image_memory_index = find_memorytype_index(
-        &depth_image_memory_req,
-        &data.device_memory_properties,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL,
-    )
-    .expect("Unable to find suitable memory index for depth image.");
-
-    let depth_image_allocate_info = vk::MemoryAllocateInfo::default()
-        .allocation_size(depth_image_memory_req.size)
-        .memory_type_index(depth_image_memory_index);
-
-    let depth_image_memory = device
-        .allocate_memory(&depth_image_allocate_info, None)
-        .unwrap();
-
-    device
-        .bind_image_memory(depth_image, depth_image_memory, 0)
-        .expect("Unable to bind depth image memory");
-
-
-    record_submit_commandbuffer(
-        &device,
-        data.setup_command_buffer,
-        data.setup_commands_reuse_fence,
-        data.present_queue,
-        &[],
-        &[],
-        &[],
-        |device, setup_command_buffer| {
-            let layout_transition_barriers = vk::ImageMemoryBarrier::default()
-                .image(depth_image)
-                .dst_access_mask(
-                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                )
-                .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .subresource_range(
-                    vk::ImageSubresourceRange::default()
-                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                        .layer_count(1)
-                        .level_count(1),
+                device.cmd_pipeline_barrier(
+                    setup_command_buffer,
+                    vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                    vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[layout_transition_barriers],
                 );
+            },
+        );
 
-            device.cmd_pipeline_barrier(
-                setup_command_buffer,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[layout_transition_barriers],
+        let depth_image_view_info = vk::ImageViewCreateInfo::default()
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                    .level_count(1)
+                    .layer_count(1),
+            )
+            .image(depth_image)
+            .format(depth_image_create_info.format)
+            .view_type(vk::ImageViewType::TYPE_2D);
+
+        let depth_image_view = device
+            .create_image_view(&depth_image_view_info, None)
+            .unwrap();
+
+        Ok(depth_image_view)
+    }
+
+    unsafe fn create_h264_video_decode_profile_list(&self, instance: &Instance, entry: &Entry) {
+        let mut video_profile_operation = vk::VideoDecodeH264ProfileInfoKHR::default()
+            .std_profile_idc(StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN)
+            .picture_layout(vk::VideoDecodeH264PictureLayoutFlagsKHR::PROGRESSIVE);
+
+        let profile_info = vk::VideoProfileInfoKHR::default()
+            .push_next(&mut video_profile_operation)
+            .video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_H264)
+            .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
+            .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
+            .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8);
+
+        let mut h264_decode_capibilities = vk::VideoDecodeH264CapabilitiesKHR::default();
+
+        let mut decode_capabilities = vk::VideoDecodeCapabilitiesKHR::default();
+        // TODO no p_next or push_next motheods yet this is failing when not passed
+        decode_capabilities.p_next = &mut h264_decode_capibilities as *mut _ as _;
+
+        let mut capabilities =
+            vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capabilities);
+
+        let video_queue_loader = VideoQueue::new(entry, instance);
+
+        video_queue_loader
+            .get_physical_device_video_capabilities_khr(
+                self.physical_device,
+                &profile_info,
+                &mut capabilities,
+            )
+            .unwrap();
+        //)?;
+
+        let profiles = vec![profile_info];
+
+        let mut profile_list_info = vk::VideoProfileListInfoKHR::default().profiles(&profiles);
+
+        let format_info = vk::PhysicalDeviceVideoFormatInfoKHR::default()
+            .push_next(&mut profile_list_info)
+            .image_usage(vk::ImageUsageFlags::VIDEO_DECODE_DST_KHR);
+
+        let format_properties_count = video_queue_loader
+            .get_physical_device_video_format_properties_khr_len(
+                self.physical_device,
+                &format_info,
             );
-        },
-    );
 
-    let depth_image_view_info = vk::ImageViewCreateInfo::default()
-        .subresource_range(
-            vk::ImageSubresourceRange::default()
-                .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                .level_count(1)
-                .layer_count(1),
-        )
-        .image(depth_image)
-        .format(depth_image_create_info.format)
-        .view_type(vk::ImageViewType::TYPE_2D);
+        let mut format_properties =
+            vec![vk::VideoFormatPropertiesKHR::default(); format_properties_count];
 
-    let depth_image_view = device
-        .create_image_view(&depth_image_view_info, None)
-        .unwrap();
+        video_queue_loader
+            .get_physical_device_video_format_properties_khr(
+                self.physical_device,
+                &format_info,
+                &mut format_properties, //)?;
+            )
+            .unwrap();
+    }
 
-    Ok(depth_image_view)
-}
+    unsafe fn create_sync_objects(&mut self, device: &Device) -> Result<(), anyhow::Error> {
+        let fence_create_info =
+            vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
 
-pub unsafe fn create_h264_video_decode_profile_list(
-    instance: &Instance,
-    entry: &Entry,
-    data: &mut AppData,
-) {
-    let mut video_profile_operation = vk::VideoDecodeH264ProfileInfoKHR::default()
-        .std_profile_idc(StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN)
-        .picture_layout(vk::VideoDecodeH264PictureLayoutFlagsKHR::PROGRESSIVE);
-
-    let profile_info = vk::VideoProfileInfoKHR::default()
-        .push_next(&mut video_profile_operation)
-        .video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_H264)
-        .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
-        .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
-        .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8);
-
-    let mut h264_decode_capibilities = vk::VideoDecodeH264CapabilitiesKHR::default();
-
-    let mut decode_capabilities = vk::VideoDecodeCapabilitiesKHR::default();
-    // TODO no p_next or push_next motheods yet this is failing when not passed
-    decode_capabilities.p_next = &mut h264_decode_capibilities as *mut _ as _;
-
-    let mut capabilities = vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capabilities);
-
-    let video_queue_loader = VideoQueue::new(entry, instance);
-
-    video_queue_loader
-        .get_physical_device_video_capabilities_khr(
-            data.physical_device,
-            &profile_info,
-            &mut capabilities,
-        )
-        .unwrap();
-    //)?;
-
-    let profiles = vec![profile_info];
-
-    let mut profile_list_info = vk::VideoProfileListInfoKHR::default().profiles(&profiles);
-
-    let format_info = vk::PhysicalDeviceVideoFormatInfoKHR::default()
-        .push_next(&mut profile_list_info)
-        .image_usage(vk::ImageUsageFlags::VIDEO_DECODE_DST_KHR);
-
-    let format_properties_count = video_queue_loader
-        .get_physical_device_video_format_properties_khr_len(data.physical_device, &format_info);
-
-    let mut format_properties =
-        vec![vk::VideoFormatPropertiesKHR::default(); format_properties_count];
-
-    video_queue_loader
-        .get_physical_device_video_format_properties_khr(
-            data.physical_device,
-            &format_info,
-            &mut format_properties, //)?;
-        )
-        .unwrap();
-}
-
-pub unsafe fn create_sync_objects(device: &Device, data: &mut AppData) -> Result<(), anyhow::Error> {
-
-
-        let fence_create_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-
-        data.draw_commands_reuse_fence = device
+        self.draw_commands_reuse_fence = device
             .create_fence(&fence_create_info, None)
             .expect("Create fence failed.");
 
-        data.setup_commands_reuse_fence = device
-            .create_fence(&fence_create_info, None)?;
-        
+        self.setup_commands_reuse_fence = device.create_fence(&fence_create_info, None)?;
+
         let semaphore_create_info = vk::SemaphoreCreateInfo::default();
 
-        data.present_complete_semaphore = device
-            .create_semaphore(&semaphore_create_info, None)?;
-        data.rendering_complete_semaphore = device
-            .create_semaphore(&semaphore_create_info, None)?;
-        
+        self.present_complete_semaphore = device.create_semaphore(&semaphore_create_info, None)?;
+        self.rendering_complete_semaphore =
+            device.create_semaphore(&semaphore_create_info, None)?;
+
         Ok(())
+    }
 }

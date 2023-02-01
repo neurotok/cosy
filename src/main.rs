@@ -8,11 +8,6 @@ use std::{
 use anyhow::Result;
 
 use ash::extensions::khr::Swapchain;
-use winit::{
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
-};
 
 use mp4parse;
 
@@ -130,9 +125,7 @@ fn main() -> Result<()> {
             }
         }
 
-
-        let mut app =
-            unsafe { App::create(video_spec.width as u32, video_spec.height as u32)? };
+        let app = unsafe { App::create(video_spec.width as u32, video_spec.height as u32)? };
 
         let renderpass_attachments = [
             vk::AttachmentDescription {
@@ -788,9 +781,9 @@ fn main() -> Result<()> {
             .create_graphics_pipelines(vk::PipelineCache::null(), &[graphic_pipeline_infos], None)
             .unwrap();
 
-
         let swapchain_loader = Swapchain::new(&app.instance, &app.device);
         let graphic_pipeline = graphics_pipelines[0];
+
         app.render_loop(|| {
             let (present_index, _) = swapchain_loader
                 .acquire_next_image(
@@ -888,7 +881,6 @@ fn main() -> Result<()> {
                 .unwrap();
         });
 
-        
         Ok(())
     }
 }
