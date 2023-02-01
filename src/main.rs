@@ -1,9 +1,9 @@
+use std::ffi::{c_void, CStr};
+use std::mem::{self, align_of};
 use std::{
     env,
     io::{Cursor, Read},
 };
-use std::ffi::{c_void, CStr};
-use std::mem::{self, align_of};
 
 use anyhow::Result;
 
@@ -17,7 +17,10 @@ use mp4parse;
 
 use cosy::*;
 
-use ash::{vk, util::{Align, read_spv}};
+use ash::{
+    util::{read_spv, Align},
+    vk,
+};
 
 // https://github.com/mozilla/mp4parse-rust/blob/a4329008c588401b1cfc283690a0118775dea728/mp4parse/tests/public.rs
 
@@ -188,7 +191,8 @@ fn main() -> Result<()> {
             .unwrap();
 
         let framebuffers: Vec<vk::Framebuffer> = app
-            .data.swapchain_image_views
+            .data
+            .swapchain_image_views
             .iter()
             .map(|&present_image_view| {
                 let framebuffer_attachments = [present_image_view, app.data.depth_image_view]; // TODO Memory droped

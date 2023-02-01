@@ -20,8 +20,8 @@ use winit;
 
 use std::borrow::Cow;
 use std::ffi::CStr;
-use std::os::raw::c_char;
 use std::mem::{self, align_of};
+use std::os::raw::c_char;
 
 pub const DEBUG_ENABLED: bool = cfg!(debug_assertions);
 
@@ -174,6 +174,7 @@ impl App {
             .create_fence(&fence_create_info, None)
             .expect("Create fence failed.");
 
+        data.depth_image_view = create_depth_image_view(&instance, &device, &mut data)?;
 
         let semaphore_create_info = vk::SemaphoreCreateInfo::default();
 
@@ -192,6 +193,102 @@ impl App {
         })
     }
     pub unsafe fn render(&mut self, window: &winit::window::Window) -> Result<()> {
+        let (present_index, _) = base
+            .swapchain_loader
+            .acquire_next_image(
+                base.swapchain,
+                std::u64::MAX,
+                base.present_complete_semaphore,
+                vk::Fence::null(),
+            )
+            .unwrap();
+        let clear_values = [
+            vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [0.0, 0.0, 0.0, 0.0],
+                },
+            },
+            vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            },
+        ];
+
+        let render_pass_begin_info = vk::RenderPassBeginInfo::default()
+            .render_pass(renderpass)
+            .framebuffer(framebuffers[present_index as usize])
+            .render_area(base.surface_resolution.into())
+            .clear_values(&clear_values);
+
+        record_submit_commandbuffer(
+            &base.device,
+            base.draw_command_buffer,
+            base.draw_commands_reuse_fence,
+            base.present_queue,
+            &[vk::PipelineStageFlags::BOTTOM_OF_PIPE],
+            &[base.present_complete_semaphore],
+            &[base.rendering_complete_semaphore],
+            |device, draw_command_buffer| {
+                device.cmd_begin_render_pass(
+                    draw_command_buffer,
+                    &render_pass_begin_info,
+                    vk::SubpassContents::INLINE,
+                );
+                device.cmd_bind_descriptor_sets(
+                    draw_command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipeline_layout,
+                    0,
+                    &descriptor_sets[..],
+                    &[],
+                );
+                device.cmd_bind_pipeline(
+                    draw_command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    graphic_pipeline,
+                );
+                device.cmd_set_viewport(draw_command_buffer, 0, &viewports);
+                device.cmd_set_scissor(draw_command_buffer, 0, &scissors);
+                device.cmd_bind_vertex_buffers(
+                    draw_command_buffer,
+                    0,
+                    &[vertex_input_buffer],
+                    &[0],
+                );
+                device.cmd_bind_index_buffer(
+                    draw_command_buffer,
+                    index_buffer,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                device.cmd_draw_indexed(
+                    draw_command_buffer,
+                    index_buffer_data.len() as u32,
+                    1,
+                    0,
+                    0,
+                    1,
+                );
+                // Or draw without the index buffer
+                // device.cmd_draw(draw_command_buffer, 3, 1, 0, 0);
+                device.cmd_end_render_pass(draw_command_buffer);
+            },
+        );
+        //let mut present_info_err = mem::zeroed();
+        let present_info = vk::PresentInfoKHR {
+            wait_semaphore_count: 1,
+            p_wait_semaphores: &base.rendering_complete_semaphore,
+            swapchain_count: 1,
+            p_swapchains: &base.swapchain,
+            p_image_indices: &present_index,
+            ..Default::default()
+        };
+        base.swapchain_loader
+            .queue_present(base.present_queue, &present_info)
+            .unwrap();
+
         Ok(())
     }
     pub unsafe fn destroy(&mut self) {
@@ -209,6 +306,13 @@ impl App {
         self.device.destroy_device(None);
         self.instance.destroy_instance(None);
     }
+}
+
+// TODO general image
+#[derive(Clone, Debug, Default)]
+pub struct Image {
+    pub image_memory: vk::DeviceMemory,
+    pub image_view: vk::ImageView,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -229,8 +333,9 @@ pub struct AppData {
     pub setup_command_buffer: vk::CommandBuffer,
     pub draw_command_buffer: vk::CommandBuffer,
     pub device_memory_properties: vk::PhysicalDeviceMemoryProperties,
-    pub setup_commands_reuse_fence: vk::Fence, 
+    pub setup_commands_reuse_fence: vk::Fence,
     pub depth_image_view: vk::ImageView,
+    //pub depth_image: Image,
 }
 
 impl AppData {
@@ -559,104 +664,101 @@ pub unsafe fn create_swapchain_image_views(
     Ok(present_image_views)
 }
 
-
 pub unsafe fn create_depth_image_view(
     instance: &Instance,
     device: &Device,
     data: &mut AppData,
 ) -> Result<vk::ImageView> {
+    let depth_image_create_info = vk::ImageCreateInfo::default()
+        .image_type(vk::ImageType::TYPE_2D)
+        .format(vk::Format::D16_UNORM)
+        .extent(data.surface_resolution.into())
+        .mip_levels(1)
+        .array_layers(1)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .tiling(vk::ImageTiling::OPTIMAL)
+        .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-        let depth_image_create_info = vk::ImageCreateInfo::default()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(vk::Format::D16_UNORM)
-            .extent(data.surface_resolution.into())
-            .mip_levels(1)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+    let depth_image = device.create_image(&depth_image_create_info, None).unwrap();
+    let depth_image_memory_req = device.get_image_memory_requirements(depth_image);
+    let depth_image_memory_index = find_memorytype_index(
+        &depth_image_memory_req,
+        &data.device_memory_properties,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    )
+    .expect("Unable to find suitable memory index for depth image.");
 
-        let depth_image = device.create_image(&depth_image_create_info, None).unwrap();
-        let depth_image_memory_req = device.get_image_memory_requirements(depth_image);
-        let depth_image_memory_index = find_memorytype_index(
-            &depth_image_memory_req,
-            &data.device_memory_properties,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        )
-        .expect("Unable to find suitable memory index for depth image.");
+    let depth_image_allocate_info = vk::MemoryAllocateInfo::default()
+        .allocation_size(depth_image_memory_req.size)
+        .memory_type_index(depth_image_memory_index);
 
-        let depth_image_allocate_info = vk::MemoryAllocateInfo::default()
-            .allocation_size(depth_image_memory_req.size)
-            .memory_type_index(depth_image_memory_index);
+    let depth_image_memory = device
+        .allocate_memory(&depth_image_allocate_info, None)
+        .unwrap();
 
-        let depth_image_memory = device
-            .allocate_memory(&depth_image_allocate_info, None)
-            .unwrap();
+    device
+        .bind_image_memory(depth_image, depth_image_memory, 0)
+        .expect("Unable to bind depth image memory");
 
-        device
-            .bind_image_memory(depth_image, depth_image_memory, 0)
-            .expect("Unable to bind depth image memory");
+    let fence_create_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
 
-        let fence_create_info =
-            vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+    let draw_commands_reuse_fence = device
+        .create_fence(&fence_create_info, None)
+        .expect("Create fence failed.");
 
-        let draw_commands_reuse_fence = device
-            .create_fence(&fence_create_info, None)
-            .expect("Create fence failed.");
-
-        record_submit_commandbuffer(
-            &device,
-            data.setup_command_buffer,
-            data.setup_commands_reuse_fence,
-            data.present_queue,
-            &[],
-            &[],
-            &[],
-            |device, setup_command_buffer| {
-                let layout_transition_barriers = vk::ImageMemoryBarrier::default()
-                    .image(depth_image)
-                    .dst_access_mask(
-                        vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
-                            | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    )
-                    .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                    .old_layout(vk::ImageLayout::UNDEFINED)
-                    .subresource_range(
-                        vk::ImageSubresourceRange::default()
-                            .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                            .layer_count(1)
-                            .level_count(1),
-                    );
-
-                device.cmd_pipeline_barrier(
-                    setup_command_buffer,
-                    vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                    vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[layout_transition_barriers],
+    record_submit_commandbuffer(
+        &device,
+        data.setup_command_buffer,
+        data.setup_commands_reuse_fence,
+        data.present_queue,
+        &[],
+        &[],
+        &[],
+        |device, setup_command_buffer| {
+            let layout_transition_barriers = vk::ImageMemoryBarrier::default()
+                .image(depth_image)
+                .dst_access_mask(
+                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                )
+                .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                        .layer_count(1)
+                        .level_count(1),
                 );
-            },
-        );
 
-        let depth_image_view_info = vk::ImageViewCreateInfo::default()
-            .subresource_range(
-                vk::ImageSubresourceRange::default()
-                    .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                    .level_count(1)
-                    .layer_count(1),
-            )
-            .image(depth_image)
-            .format(depth_image_create_info.format)
-            .view_type(vk::ImageViewType::TYPE_2D);
+            device.cmd_pipeline_barrier(
+                setup_command_buffer,
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[layout_transition_barriers],
+            );
+        },
+    );
 
-        let depth_image_view = device
-            .create_image_view(&depth_image_view_info, None)
-            .unwrap();
-        
-        Ok(depth_image_view)
+    let depth_image_view_info = vk::ImageViewCreateInfo::default()
+        .subresource_range(
+            vk::ImageSubresourceRange::default()
+                .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                .level_count(1)
+                .layer_count(1),
+        )
+        .image(depth_image)
+        .format(depth_image_create_info.format)
+        .view_type(vk::ImageViewType::TYPE_2D);
+
+    let depth_image_view = device
+        .create_image_view(&depth_image_view_info, None)
+        .unwrap();
+
+    Ok(depth_image_view)
 }
 
 pub unsafe fn create_h264_video_decode_profile_list(
