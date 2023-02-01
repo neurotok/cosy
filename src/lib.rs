@@ -21,6 +21,7 @@ use winit;
 use std::borrow::Cow;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::mem::{self, align_of};
 
 pub const DEBUG_ENABLED: bool = cfg!(debug_assertions);
 
@@ -163,7 +164,7 @@ impl App {
         data.swapchain = create_swapchain(&instance, &device, &entry, &mut data)?;
         data.swapchain_image_views = create_swapchain_image_views(&instance, &device, &mut data)?;
 
-        let device_memory_properties =
+        data.device_memory_properties =
             instance.get_physical_device_memory_properties(data.physical_device);
         let depth_image_create_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
@@ -180,7 +181,7 @@ impl App {
         let depth_image_memory_req = device.get_image_memory_requirements(depth_image);
         let depth_image_memory_index = find_memorytype_index(
             &depth_image_memory_req,
-            &device_memory_properties,
+            &data.device_memory_properties,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
         )
         .expect("Unable to find suitable memory index for depth image.");
@@ -311,6 +312,7 @@ pub struct AppData {
     pub swapchain_image_views: Vec<vk::ImageView>,
     pub setup_command_buffer: vk::CommandBuffer,
     pub draw_command_buffer: vk::CommandBuffer,
+    pub device_memory_properties: vk::PhysicalDeviceMemoryProperties,
 }
 
 impl AppData {

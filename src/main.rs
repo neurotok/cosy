@@ -2,6 +2,8 @@ use std::{
     env,
     io::{Cursor, Read},
 };
+use std::ffi::{c_void, CStr};
+use std::mem::{self, align_of};
 
 use anyhow::Result;
 
@@ -15,7 +17,7 @@ use mp4parse;
 
 use cosy::*;
 
-use ash::{vk, Entry};
+use ash::{vk, util::{Align, read_spv}};
 
 // https://github.com/mozilla/mp4parse-rust/blob/a4329008c588401b1cfc283690a0118775dea728/mp4parse/tests/public.rs
 
@@ -186,7 +188,7 @@ fn main() -> Result<()> {
             .unwrap();
 
         let framebuffers: Vec<vk::Framebuffer> = app
-            .data.present_image_views
+            .data.swapchain_image_views
             .iter()
             .map(|&present_image_view| {
                 let framebuffer_attachments = [present_image_view, app.depth_image_view];
@@ -213,7 +215,7 @@ fn main() -> Result<()> {
         let index_buffer_memory_req = app.device.get_buffer_memory_requirements(index_buffer);
         let index_buffer_memory_index = find_memorytype_index(
             &index_buffer_memory_req,
-            &app.device_memory_properties,
+            &app.data.device_memory_properties,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )
         .expect("Unable to find suitable memorytype for the index buffer.");
@@ -279,7 +281,7 @@ fn main() -> Result<()> {
             .get_buffer_memory_requirements(vertex_input_buffer);
         let vertex_input_buffer_memory_index = find_memorytype_index(
             &vertex_input_buffer_memory_req,
-            &app.device_memory_properties,
+            &app.data.device_memory_properties,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )
         .expect("Unable to find suitable memorytype for the vertex buffer.");
@@ -335,7 +337,7 @@ fn main() -> Result<()> {
             .get_buffer_memory_requirements(uniform_color_buffer);
         let uniform_color_buffer_memory_index = find_memorytype_index(
             &uniform_color_buffer_memory_req,
-            &app.device_memory_properties,
+            &app.data.device_memory_properties,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )
         .expect("Unable to find suitable memorytype for the vertex buffer.");
@@ -369,7 +371,7 @@ fn main() -> Result<()> {
             .bind_buffer_memory(uniform_color_buffer, uniform_color_buffer_memory, 0)
             .unwrap();
 
-        let image = image::load_from_memory(include_bytes!("../../assets/rust.png"))
+        let image = image::load_from_memory(include_bytes!("../assets/rust.png"))
             .unwrap()
             .to_rgba8();
         let (width, height) = image.dimensions();
@@ -385,7 +387,7 @@ fn main() -> Result<()> {
         let image_buffer_memory_req = app.device.get_buffer_memory_requirements(image_buffer);
         let image_buffer_memory_index = find_memorytype_index(
             &image_buffer_memory_req,
-            &app.device_memory_properties,
+            &app.data.device_memory_properties,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         )
         .expect("Unable to find suitable memorytype for the image buffer.");
@@ -435,7 +437,7 @@ fn main() -> Result<()> {
         let texture_memory_req = app.device.get_image_memory_requirements(texture_image);
         let texture_memory_index = find_memorytype_index(
             &texture_memory_req,
-            &app.device_memory_properties,
+            &app.data.device_memory_properties,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
         )
         .expect("Unable to find suitable memory index for depth image.");
@@ -455,9 +457,9 @@ fn main() -> Result<()> {
 
         record_submit_commandbuffer(
             &app.device,
-            app.setup_command_buffer,
-            app.setup_commands_reuse_fence,
-            app.present_queue,
+            app.data.setup_command_buffer,
+            app.data.setup_commands_reuse_fence,
+            app.data.present_queue,
             &[],
             &[],
             &[],
@@ -641,8 +643,8 @@ fn main() -> Result<()> {
         ];
         app.device.update_descriptor_sets(&write_desc_sets, &[]);
 
-        let mut vertex_spv_file = Cursor::new(&include_bytes!("../../shader/texture/vert.spv")[..]);
-        let mut frag_spv_file = Cursor::new(&include_bytes!("../../shader/texture/frag.spv")[..]);
+        let mut vertex_spv_file = Cursor::new(&include_bytes!("../shader/texture/vert.spv")[..]);
+        let mut frag_spv_file = Cursor::new(&include_bytes!("../shader/texture/frag.spv")[..]);
 
         let vertex_code =
             read_spv(&mut vertex_spv_file).expect("Failed to read vertex shader spv file");
@@ -715,12 +717,12 @@ fn main() -> Result<()> {
         let viewports = [vk::Viewport {
             x: 0.0,
             y: 0.0,
-            width: app.surface_resolution.width as f32,
-            height: app.surface_resolution.height as f32,
+            width: app.data.surface_resolution.width as f32,
+            height: app.data.surface_resolution.height as f32,
             min_depth: 0.0,
             max_depth: 1.0,
         }];
-        let scissors = [app.surface_resolution.into()];
+        let scissors = [app.data.surface_resolution.into()];
         let viewport_state_info = vk::PipelineViewportStateCreateInfo::default()
             .scissors(&scissors)
             .viewports(&viewports);
