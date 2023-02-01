@@ -191,7 +191,7 @@ fn main() -> Result<()> {
             .data.swapchain_image_views
             .iter()
             .map(|&present_image_view| {
-                let framebuffer_attachments = [present_image_view, app.depth_image_view];
+                let framebuffer_attachments = [present_image_view, app.data.depth_image_view]; // TODO Memory droped
                 let frame_buffer_create_info = vk::FramebufferCreateInfo::default()
                     .render_pass(renderpass)
                     .attachments(&framebuffer_attachments)
