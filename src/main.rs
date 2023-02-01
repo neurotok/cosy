@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::Result;
 
+use ash::extensions::khr::Swapchain;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -129,16 +130,9 @@ fn main() -> Result<()> {
             }
         }
 
-        let event_loop = EventLoop::new();
-
-        let window = WindowBuilder::new()
-            .with_title("Cozy player")
-            .with_inner_size(winit::dpi::LogicalSize::new(f64::from(800), f64::from(600)))
-            .build(&event_loop)
-            .unwrap();
 
         let mut app =
-            unsafe { App::create(&window, video_spec.width as u32, video_spec.height as u32)? };
+            unsafe { App::create(video_spec.width as u32, video_spec.height as u32)? };
 
         let renderpass_attachments = [
             vk::AttachmentDescription {
@@ -794,25 +788,107 @@ fn main() -> Result<()> {
             .create_graphics_pipelines(vk::PipelineCache::null(), &[graphic_pipeline_infos], None)
             .unwrap();
 
-        let graphic_pipeline = graphics_pipelines[0];
 
-        let mut destroying = false;
-        event_loop.run(move |event, _, control_flow| {
-            *control_flow = ControlFlow::Poll;
-            match event {
-                Event::MainEventsCleared if !destroying => unsafe { app.render(&window) }.unwrap(),
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
-                    destroying = true;
-                    *control_flow = ControlFlow::Exit;
-                    unsafe {
-                        app.destroy();
-                    }
-                }
-                _ => {}
-            }
+        let swapchain_loader = Swapchain::new(&app.instance, &app.device);
+        let graphic_pipeline = graphics_pipelines[0];
+        app.render_loop(|| {
+            let (present_index, _) = swapchain_loader
+                .acquire_next_image(
+                    app.data.swapchain,
+                    std::u64::MAX,
+                    app.data.present_complete_semaphore,
+                    vk::Fence::null(),
+                )
+                .unwrap();
+            let clear_values = [
+                vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [0.0, 0.0, 0.0, 0.0],
+                    },
+                },
+                vk::ClearValue {
+                    depth_stencil: vk::ClearDepthStencilValue {
+                        depth: 1.0,
+                        stencil: 0,
+                    },
+                },
+            ];
+
+            let render_pass_begin_info = vk::RenderPassBeginInfo::default()
+                .render_pass(renderpass)
+                .framebuffer(framebuffers[present_index as usize])
+                .render_area(app.data.surface_resolution.into())
+                .clear_values(&clear_values);
+
+            record_submit_commandbuffer(
+                &app.device,
+                app.data.draw_command_buffer,
+                app.data.draw_commands_reuse_fence,
+                app.data.present_queue,
+                &[vk::PipelineStageFlags::BOTTOM_OF_PIPE],
+                &[app.data.present_complete_semaphore],
+                &[app.data.rendering_complete_semaphore],
+                |device, draw_command_buffer| {
+                    device.cmd_begin_render_pass(
+                        draw_command_buffer,
+                        &render_pass_begin_info,
+                        vk::SubpassContents::INLINE,
+                    );
+                    device.cmd_bind_descriptor_sets(
+                        draw_command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline_layout,
+                        0,
+                        &descriptor_sets[..],
+                        &[],
+                    );
+                    device.cmd_bind_pipeline(
+                        draw_command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        graphic_pipeline,
+                    );
+                    device.cmd_set_viewport(draw_command_buffer, 0, &viewports);
+                    device.cmd_set_scissor(draw_command_buffer, 0, &scissors);
+                    device.cmd_bind_vertex_buffers(
+                        draw_command_buffer,
+                        0,
+                        &[vertex_input_buffer],
+                        &[0],
+                    );
+                    device.cmd_bind_index_buffer(
+                        draw_command_buffer,
+                        index_buffer,
+                        0,
+                        vk::IndexType::UINT32,
+                    );
+                    device.cmd_draw_indexed(
+                        draw_command_buffer,
+                        index_buffer_data.len() as u32,
+                        1,
+                        0,
+                        0,
+                        1,
+                    );
+                    // Or draw without the index buffer
+                    // device.cmd_draw(draw_command_buffer, 3, 1, 0, 0);
+                    device.cmd_end_render_pass(draw_command_buffer);
+                },
+            );
+            //let mut present_info_err = mem::zeroed();
+            let present_info = vk::PresentInfoKHR {
+                wait_semaphore_count: 1,
+                p_wait_semaphores: &app.data.rendering_complete_semaphore,
+                swapchain_count: 1,
+                p_swapchains: &app.data.swapchain,
+                p_image_indices: &present_index,
+                ..Default::default()
+            };
+            swapchain_loader
+                .queue_present(app.data.present_queue, &present_info)
+                .unwrap();
         });
+
+        
+        Ok(())
     }
 }

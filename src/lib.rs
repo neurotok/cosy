@@ -16,9 +16,13 @@ use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
 use anyhow::{anyhow, Result};
 
-use winit;
+use winit::{
+    event::{Event, WindowEvent, KeyboardInput, ElementState, VirtualKeyCode},
+    event_loop::{ControlFlow, EventLoop, self},
+    window::WindowBuilder, platform::run_return::EventLoopExtRunReturn,
+};
 
-use std::borrow::Cow;
+use std::{borrow::Cow, cell::RefCell};
 use std::ffi::CStr;
 use std::mem::{self, align_of};
 use std::os::raw::c_char;
@@ -133,6 +137,8 @@ pub fn find_memorytype_index(
 }
 
 pub struct App {
+    pub event_loop:RefCell<EventLoop<()>>,
+    pub window: winit::window::Window,
     pub entry: Entry,
     pub data: AppData,
     pub instance: Instance,
@@ -141,15 +147,22 @@ pub struct App {
 
 impl App {
     pub unsafe fn create(
-        window: &winit::window::Window,
         window_width: u32,
         window_height: u32,
     ) -> Result<Self> {
+
+        let event_loop = EventLoop::new();
+
+        let window = WindowBuilder::new()
+            .with_title("Cozy player")
+            .with_inner_size(winit::dpi::LogicalSize::new(f64::from(window_width), f64::from(window_height)))
+            .build(&event_loop)?;
+
         let entry = Entry::linked();
 
         let mut data = AppData::new(window_width, window_height);
 
-        let instance = create_instance(window, &entry, &mut data)?;
+        let instance = create_instance(&window, &entry, &mut data)?;
 
         data.surface = ash_window::create_surface(
             &entry,
@@ -167,130 +180,47 @@ impl App {
         data.device_memory_properties =
             instance.get_physical_device_memory_properties(data.physical_device);
 
-        let fence_create_info =
-            vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+        create_sync_objects(&device, &mut data);
 
-        data.setup_commands_reuse_fence = device
-            .create_fence(&fence_create_info, None)
-            .expect("Create fence failed.");
 
         data.depth_image_view = create_depth_image_view(&instance, &device, &mut data)?;
 
-        let semaphore_create_info = vk::SemaphoreCreateInfo::default();
-
-        let present_complete_semaphore = device
-            .create_semaphore(&semaphore_create_info, None)
-            .unwrap();
-        let rendering_complete_semaphore = device
-            .create_semaphore(&semaphore_create_info, None)
-            .unwrap();
-
         Ok(Self {
+            event_loop: RefCell::new(event_loop),
+            window,
             entry,
             data,
             instance,
             device,
         })
     }
-    pub unsafe fn render(&mut self, window: &winit::window::Window) -> Result<()> {
-        let (present_index, _) = base
-            .swapchain_loader
-            .acquire_next_image(
-                base.swapchain,
-                std::u64::MAX,
-                base.present_complete_semaphore,
-                vk::Fence::null(),
-            )
-            .unwrap();
-        let clear_values = [
-            vk::ClearValue {
-                color: vk::ClearColorValue {
-                    float32: [0.0, 0.0, 0.0, 0.0],
-                },
-            },
-            vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue {
-                    depth: 1.0,
-                    stencil: 0,
-                },
-            },
-        ];
 
-        let render_pass_begin_info = vk::RenderPassBeginInfo::default()
-            .render_pass(renderpass)
-            .framebuffer(framebuffers[present_index as usize])
-            .render_area(base.surface_resolution.into())
-            .clear_values(&clear_values);
-
-        record_submit_commandbuffer(
-            &base.device,
-            base.draw_command_buffer,
-            base.draw_commands_reuse_fence,
-            base.present_queue,
-            &[vk::PipelineStageFlags::BOTTOM_OF_PIPE],
-            &[base.present_complete_semaphore],
-            &[base.rendering_complete_semaphore],
-            |device, draw_command_buffer| {
-                device.cmd_begin_render_pass(
-                    draw_command_buffer,
-                    &render_pass_begin_info,
-                    vk::SubpassContents::INLINE,
-                );
-                device.cmd_bind_descriptor_sets(
-                    draw_command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pipeline_layout,
-                    0,
-                    &descriptor_sets[..],
-                    &[],
-                );
-                device.cmd_bind_pipeline(
-                    draw_command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    graphic_pipeline,
-                );
-                device.cmd_set_viewport(draw_command_buffer, 0, &viewports);
-                device.cmd_set_scissor(draw_command_buffer, 0, &scissors);
-                device.cmd_bind_vertex_buffers(
-                    draw_command_buffer,
-                    0,
-                    &[vertex_input_buffer],
-                    &[0],
-                );
-                device.cmd_bind_index_buffer(
-                    draw_command_buffer,
-                    index_buffer,
-                    0,
-                    vk::IndexType::UINT32,
-                );
-                device.cmd_draw_indexed(
-                    draw_command_buffer,
-                    index_buffer_data.len() as u32,
-                    1,
-                    0,
-                    0,
-                    1,
-                );
-                // Or draw without the index buffer
-                // device.cmd_draw(draw_command_buffer, 3, 1, 0, 0);
-                device.cmd_end_render_pass(draw_command_buffer);
-            },
-        );
-        //let mut present_info_err = mem::zeroed();
-        let present_info = vk::PresentInfoKHR {
-            wait_semaphore_count: 1,
-            p_wait_semaphores: &base.rendering_complete_semaphore,
-            swapchain_count: 1,
-            p_swapchains: &base.swapchain,
-            p_image_indices: &present_index,
-            ..Default::default()
-        };
-        base.swapchain_loader
-            .queue_present(base.present_queue, &present_info)
-            .unwrap();
-
-        Ok(())
+    pub fn render_loop<F: Fn()>(&self, f: F) {
+        self.event_loop
+            .borrow_mut()
+            .run_return(|event, _, control_flow| {
+                *control_flow = ControlFlow::Poll;
+                match event {
+                    Event::WindowEvent {
+                        event:
+                            WindowEvent::CloseRequested
+                            | WindowEvent::KeyboardInput {
+                                input:
+                                    KeyboardInput {
+                                        state: ElementState::Pressed,
+                                        virtual_keycode: Some(VirtualKeyCode::Escape),
+                                        ..
+                                    },
+                                ..
+                            },
+                        ..
+                    } => *control_flow = ControlFlow::Exit,
+                    Event::MainEventsCleared => f(),
+                    _ => (),
+                }
+            });
     }
+
     pub unsafe fn destroy(&mut self) {
         self.device.device_wait_idle().unwrap();
 
@@ -336,6 +266,10 @@ pub struct AppData {
     pub setup_commands_reuse_fence: vk::Fence,
     pub depth_image_view: vk::ImageView,
     //pub depth_image: Image,
+    pub draw_commands_reuse_fence: vk::Fence,
+    pub present_complete_semaphore: vk::Semaphore,
+    pub rendering_complete_semaphore: vk::Semaphore,
+
 }
 
 impl AppData {
@@ -701,11 +635,6 @@ pub unsafe fn create_depth_image_view(
         .bind_image_memory(depth_image, depth_image_memory, 0)
         .expect("Unable to bind depth image memory");
 
-    let fence_create_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-
-    let draw_commands_reuse_fence = device
-        .create_fence(&fence_create_info, None)
-        .expect("Create fence failed.");
 
     record_submit_commandbuffer(
         &device,
@@ -817,4 +746,26 @@ pub unsafe fn create_h264_video_decode_profile_list(
             &mut format_properties, //)?;
         )
         .unwrap();
+}
+
+pub unsafe fn create_sync_objects(device: &Device, data: &mut AppData) -> Result<(), anyhow::Error> {
+
+
+        let fence_create_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+
+        data.draw_commands_reuse_fence = device
+            .create_fence(&fence_create_info, None)
+            .expect("Create fence failed.");
+
+        data.setup_commands_reuse_fence = device
+            .create_fence(&fence_create_info, None)?;
+        
+        let semaphore_create_info = vk::SemaphoreCreateInfo::default();
+
+        data.present_complete_semaphore = device
+            .create_semaphore(&semaphore_create_info, None)?;
+        data.rendering_complete_semaphore = device
+            .create_semaphore(&semaphore_create_info, None)?;
+        
+        Ok(())
 }
