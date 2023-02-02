@@ -8,7 +8,7 @@ use std::os::raw::c_void;
 use ash::util::*;
 use ash::vk;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 
 use cozy::*;
 
