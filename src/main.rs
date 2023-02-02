@@ -211,8 +211,10 @@ fn main() -> Result<()> {
             width: video_spec.width as u32,
             height: video_spec.height as u32,
         };
+    
+        // DST
 
-        let decode_putput_image_create_info = vk::ImageCreateInfo {
+        let dst_image_create_info = vk::ImageCreateInfo {
             p_next: &mut profile_list_info as *mut _ as _,
             image_type: vk::ImageType::TYPE_2D,
             format: dst_video_format,
@@ -225,42 +227,42 @@ fn main() -> Result<()> {
             ..Default::default()
         };
 
-        let decode_output_image = base
+        let dst_image = base
             .device
-            .create_image(&decode_putput_image_create_info, None)
+            .create_image(&dst_image_create_info, None)
             .unwrap();
 
-        let decode_output_memory_req = base.device.get_image_memory_requirements(decode_output_image);
-        let decode_output_memory_index = find_memorytype_index(
-            &decode_output_memory_req,
+        let dst_memory_req = base.device.get_image_memory_requirements(dst_image);
+        let dst_memory_index = find_memorytype_index(
+            &dst_memory_req,
             &base.device_memory_properties,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
         )
         .expect("Unable to find suitable memory index for depth image.");
 
-        let decode_output_allocate_info = vk::MemoryAllocateInfo {
-            allocation_size: decode_output_memory_req.size,
-            memory_type_index: decode_output_memory_index,
+        let dst_allocate_info = vk::MemoryAllocateInfo {
+            allocation_size: dst_memory_req.size,
+            memory_type_index: dst_memory_index,
             ..Default::default()
         };
-        let decode_output_memory = base
+        let dst_memory = base
             .device
-            .allocate_memory(&decode_output_allocate_info, None)
+            .allocate_memory(&dst_allocate_info, None)
             .unwrap();
         base.device
-            .bind_image_memory(decode_output_image, decode_output_memory, 0)
+            .bind_image_memory(dst_image, dst_memory, 0)
             .expect("Unable to bind depth image memory");
 
-        let mut image_view_usage_create_info = vk::ImageViewUsageCreateInfo {
+        let mut dst_image_view_usage_create_info = vk::ImageViewUsageCreateInfo {
             usage: vk::ImageUsageFlags::VIDEO_DECODE_DST_KHR,
             ..Default::default()
         };
 
-        let decode_output_image_view_info = vk::ImageViewCreateInfo {
-            p_next: &mut image_view_usage_create_info as *mut _ as _,
+        let dst_image_view_info = vk::ImageViewCreateInfo {
+            p_next: &mut dst_image_view_usage_create_info as *mut _ as _,
             view_type: vk::ImageViewType::TYPE_2D,
             format: dst_video_format,
-            image: decode_output_image,
+            image: dst_image,
             subresource_range: vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 level_count: 1,
@@ -270,9 +272,74 @@ fn main() -> Result<()> {
             ..Default::default()
         };
 
-        let decode_output_image_view = base
+        let dst_image_view = base
             .device
-            .create_image_view(&decode_output_image_view_info, None)
+            .create_image_view(&dst_image_view_info, None)
+            .unwrap();
+        
+        // DPB
+        
+        let dpb_image_create_info = vk::ImageCreateInfo {
+            p_next: &mut profile_list_info as *mut _ as _,
+            image_type: vk::ImageType::TYPE_2D,
+            format: dpb_video_format,
+            extent: video_extent.into(),
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SampleCountFlags::TYPE_1,
+            tiling: vk::ImageTiling::OPTIMAL,
+            usage: vk::ImageUsageFlags::VIDEO_DECODE_DPB_KHR,
+            ..Default::default()
+        };
+
+        let dpb_image = base
+            .device
+            .create_image(&dpb_image_create_info, None)
+            .unwrap();
+
+        let dpb_memory_req = base.device.get_image_memory_requirements(dpb_image);
+        let dpb_memory_index = find_memorytype_index(
+            &dpb_memory_req,
+            &base.device_memory_properties,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        )
+        .expect("Unable to find suitable memory index for depth image.");
+
+        let dpb_allocate_info = vk::MemoryAllocateInfo {
+            allocation_size: dpb_memory_req.size,
+            memory_type_index: dpb_memory_index,
+            ..Default::default()
+        };
+        let dpb_memory = base
+            .device
+            .allocate_memory(&dpb_allocate_info, None)
+            .unwrap();
+        base.device
+            .bind_image_memory(dpb_image, dpb_memory, 0)
+            .expect("Unable to bind depth image memory");
+
+        let mut dpb_image_view_usage_create_info = vk::ImageViewUsageCreateInfo {
+            usage: vk::ImageUsageFlags::VIDEO_DECODE_DPB_KHR,
+            ..Default::default()
+        };
+
+        let dpb_image_view_info = vk::ImageViewCreateInfo {
+            p_next: &mut dpb_image_view_usage_create_info as *mut _ as _,
+            view_type: vk::ImageViewType::TYPE_2D,
+            format: dpb_video_format,
+            image: dpb_image,
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                level_count: 1,
+                layer_count: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let dpb_image_view = base
+            .device
+            .create_image_view(&dpb_image_view_info, None)
             .unwrap();
 
         let renderpass_attachments = [
@@ -1042,9 +1109,15 @@ fn main() -> Result<()> {
             .destroy_shader_module(fragment_shader_module, None);
 
         base.device.destroy_buffer(bistream_buffer, None);
-        base.device.free_memory(decode_output_memory, None);
-        base.device.destroy_image(decode_output_image, None);
-        base.device.destroy_image_view(decode_output_image_view, None);
+
+
+        base.device.free_memory(dpb_memory, None);
+        base.device.destroy_image(dpb_image, None);
+        base.device.destroy_image_view(dpb_image_view, None);
+
+        base.device.free_memory(dst_memory, None);
+        base.device.destroy_image(dst_image, None);
+        base.device.destroy_image_view(dst_image_view, None);
 
         base.device.free_memory(image_buffer_memory, None);
         base.device.destroy_buffer(image_buffer, None);
