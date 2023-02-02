@@ -5,8 +5,10 @@ use std::io::{Cursor, Read};
 use std::mem::{self, align_of};
 use std::os::raw::c_void;
 
+use ash::extensions::khr::VideoQueue;
 use ash::util::*;
 use ash::vk;
+use ash::vk::native::StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN;
 
 use anyhow::Result;
 
@@ -72,6 +74,9 @@ fn main() -> Result<()> {
             match track.track_type {
                 mp4parse::TrackType::Video => {
                     let stsd = track.stsd.expect("expected an stsd");
+
+                    let stcs = track.stsc.expect("expected an stsc");
+
                     let v = match stsd.descriptions.first().expect("expected a SampleEntry") {
                         mp4parse::SampleEntry::Video(v) => v,
                         _ => panic!("expected a VideoSampleEntry"),
@@ -120,6 +125,155 @@ fn main() -> Result<()> {
         }
 
         let base = ExampleBase::new(video_spec.width as u32, video_spec.height as u32)?;
+
+        let mut video_profile_operation = vk::VideoDecodeH264ProfileInfoKHR::default()
+            .std_profile_idc(StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN)
+            .picture_layout(vk::VideoDecodeH264PictureLayoutFlagsKHR::PROGRESSIVE);
+
+        let profile_info = vk::VideoProfileInfoKHR::default()
+            .push_next(&mut video_profile_operation)
+            .video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_H264)
+            .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
+            .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
+            .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8);
+
+        let mut h264_decode_capibilities = vk::VideoDecodeH264CapabilitiesKHR::default();
+
+        let mut decode_capabilities = vk::VideoDecodeCapabilitiesKHR::default();
+
+        // TODO no p_next or push_next motheods yet this is failing when not passed
+        decode_capabilities.p_next = &mut h264_decode_capibilities as *mut _ as _;
+
+        let mut capabilities =
+            vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capabilities);
+
+        let video_queue_loader = VideoQueue::new(&base.entry, &base.instance);
+
+        video_queue_loader
+            .get_physical_device_video_capabilities_khr(
+                base.pdevice,
+                &profile_info,
+                &mut capabilities,
+            )
+            .unwrap();
+
+        let video_profiles = vec![profile_info];
+
+        let mut profile_list_info =
+            vk::VideoProfileListInfoKHR::default().profiles(&video_profiles);
+
+        let mut dst_video_format = find_video_format(
+            base.pdevice,
+            &video_queue_loader,
+            vk::ImageUsageFlags::VIDEO_DECODE_DST_KHR,
+            &mut profile_list_info,
+        )?;
+        let mut dpb_video_format = find_video_format(
+            base.pdevice,
+            &video_queue_loader,
+            vk::ImageUsageFlags::VIDEO_DECODE_DPB_KHR,
+            &mut profile_list_info,
+        )?;
+
+        //TODO experimental
+        let prefer_coincide_mode = false;
+
+        if decode_capabilities
+            .flags
+            .contains(vk::VideoDecodeCapabilityFlagsKHR::DPB_AND_OUTPUT_DISTINCT)
+            && prefer_coincide_mode
+        {
+            dst_video_format = find_video_format(
+                base.pdevice,
+                &video_queue_loader,
+                vk::ImageUsageFlags::VIDEO_DECODE_DST_KHR
+                    | vk::ImageUsageFlags::VIDEO_DECODE_DPB_KHR,
+                &mut profile_list_info,
+            )?;
+
+            dpb_video_format = dst_video_format;
+        }
+
+        let bitstream_buffer_info = vk::BufferCreateInfo {
+            p_next: &mut profile_list_info as *mut _ as _,
+            size: buf.len() as u64,
+            usage: vk::BufferUsageFlags::VIDEO_DECODE_DST_KHR,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+            ..Default::default()
+        };
+
+        let bistream_buffer = base
+            .device
+            .create_buffer(&bitstream_buffer_info, None)
+            .unwrap();
+
+        let video_extent = vk::Extent2D {
+            width: video_spec.width as u32,
+            height: video_spec.height as u32,
+        };
+
+        let decode_putput_image_create_info = vk::ImageCreateInfo {
+            p_next: &mut profile_list_info as *mut _ as _,
+            image_type: vk::ImageType::TYPE_2D,
+            format: dst_video_format,
+            extent: video_extent.into(),
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SampleCountFlags::TYPE_1,
+            tiling: vk::ImageTiling::OPTIMAL,
+            usage: vk::ImageUsageFlags::VIDEO_DECODE_DST_KHR,
+            ..Default::default()
+        };
+
+        let decode_output_image = base
+            .device
+            .create_image(&decode_putput_image_create_info, None)
+            .unwrap();
+
+        let decode_output_memory_req = base.device.get_image_memory_requirements(decode_output_image);
+        let decode_output_memory_index = find_memorytype_index(
+            &decode_output_memory_req,
+            &base.device_memory_properties,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        )
+        .expect("Unable to find suitable memory index for depth image.");
+
+        let decode_output_allocate_info = vk::MemoryAllocateInfo {
+            allocation_size: decode_output_memory_req.size,
+            memory_type_index: decode_output_memory_index,
+            ..Default::default()
+        };
+        let decode_output_memory = base
+            .device
+            .allocate_memory(&decode_output_allocate_info, None)
+            .unwrap();
+        base.device
+            .bind_image_memory(decode_output_image, decode_output_memory, 0)
+            .expect("Unable to bind depth image memory");
+
+        let mut image_view_usage_create_info = vk::ImageViewUsageCreateInfo {
+            usage: vk::ImageUsageFlags::VIDEO_DECODE_DST_KHR,
+            ..Default::default()
+        };
+
+        let decode_output_image_view_info = vk::ImageViewCreateInfo {
+            p_next: &mut image_view_usage_create_info as *mut _ as _,
+            view_type: vk::ImageViewType::TYPE_2D,
+            format: dst_video_format,
+            image: decode_output_image,
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                level_count: 1,
+                layer_count: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let decode_output_image_view = base
+            .device
+            .create_image_view(&decode_output_image_view_info, None)
+            .unwrap();
 
         let renderpass_attachments = [
             vk::AttachmentDescription {
@@ -886,6 +1040,12 @@ fn main() -> Result<()> {
             .destroy_shader_module(vertex_shader_module, None);
         base.device
             .destroy_shader_module(fragment_shader_module, None);
+
+        base.device.destroy_buffer(bistream_buffer, None);
+        base.device.free_memory(decode_output_memory, None);
+        base.device.destroy_image(decode_output_image, None);
+        base.device.destroy_image_view(decode_output_image_view, None);
+
         base.device.free_memory(image_buffer_memory, None);
         base.device.destroy_buffer(image_buffer, None);
         base.device.free_memory(texture_memory, None);

@@ -3,7 +3,7 @@ use ash::{
         ext::DebugUtils,
         khr::{Surface, Swapchain, VideoQueue},
     },
-    vk::{native::StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN, KhrVideoQueueFn},
+    vk::KhrVideoQueueFn,
 };
 
 use ash::{vk, Entry};
@@ -142,6 +142,36 @@ pub fn find_memorytype_index(
         .map(|(index, _memory_type)| index as _)
 }
 
+pub fn find_video_format(
+    pdevice: vk::PhysicalDevice,
+    video_queue_loader: &VideoQueue,
+    image_usage: vk::ImageUsageFlags,
+    profile_list_info: &mut vk::VideoProfileListInfoKHR,
+) -> Result<vk::Format> {
+    let format_info = vk::PhysicalDeviceVideoFormatInfoKHR::default()
+        .push_next(profile_list_info)
+        .image_usage(image_usage);
+
+    unsafe {
+        let format_properties_count = video_queue_loader
+            .get_physical_device_video_format_properties_khr_len(pdevice, &format_info);
+
+        assert!(format_properties_count > 0);
+
+        let mut format_properties =
+            vec![vk::VideoFormatPropertiesKHR::default(); format_properties_count];
+
+        video_queue_loader.get_physical_device_video_format_properties_khr(
+            pdevice,
+            &format_info,
+            &mut format_properties,
+        )?;
+
+        Ok(format_properties[0].format)
+    }
+    // TODO more conscious decision
+}
+
 pub struct ExampleBase {
     pub entry: Entry,
     pub instance: Instance,
@@ -159,6 +189,10 @@ pub struct ExampleBase {
     pub decode_queue_family_index: u32,
     pub present_queue: vk::Queue,
 
+    //pub video_profiles: Vec<vk::VideoProfileInfoKHR>,
+    //pub profile_list_info: VideoProfileInfoKHR,
+    //pub dst_video_format: vk::Format,
+    //pub dpb_video_format: vk::Format,
     pub surface: vk::SurfaceKHR,
     pub surface_format: vk::SurfaceFormatKHR,
     pub surface_resolution: vk::Extent2D,
@@ -227,14 +261,13 @@ impl ExampleBase {
                 b"VK_LAYER_KHRONOS_validation\0",
             )];
             let layers_names_raw: Vec<*const c_char> = if DEBUG_ENABLED {
-                layer_names 
-                .iter()
-                .map(|raw_name| raw_name.as_ptr())
-                .collect()
+                layer_names
+                    .iter()
+                    .map(|raw_name| raw_name.as_ptr())
+                    .collect()
             } else {
                 vec![]
             };
-                
 
             let mut extension_names =
                 ash_window::enumerate_required_extensions(window.raw_display_handle())
@@ -272,7 +305,6 @@ impl ExampleBase {
                 .create_instance(&create_info, None)
                 .expect("Instance creation error");
 
-            
             let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
                 .message_severity(
                     vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
@@ -412,59 +444,6 @@ impl ExampleBase {
 
             let device: Device = instance
                 .create_device(pdevice, &device_create_info, None)
-                .unwrap();
-
-            let mut video_profile_operation = vk::VideoDecodeH264ProfileInfoKHR::default()
-                .std_profile_idc(StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN)
-                .picture_layout(vk::VideoDecodeH264PictureLayoutFlagsKHR::PROGRESSIVE);
-
-            let profile_info = vk::VideoProfileInfoKHR::default()
-                .push_next(&mut video_profile_operation)
-                .video_codec_operation(vk::VideoCodecOperationFlagsKHR::DECODE_H264)
-                .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
-                .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
-                .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8);
-
-            let mut h264_decode_capibilities = vk::VideoDecodeH264CapabilitiesKHR::default();
-
-            let mut decode_capabilities = vk::VideoDecodeCapabilitiesKHR::default();
-            // TODO no p_next or push_next motheods yet this is failing when not passed
-            decode_capabilities.p_next = &mut h264_decode_capibilities as *mut _ as _;
-
-            let mut capabilities =
-                vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capabilities);
-
-            let video_queue_loader = VideoQueue::new(&entry, &instance);
-
-            video_queue_loader
-                .get_physical_device_video_capabilities_khr(
-                    pdevice,
-                    &profile_info,
-                    &mut capabilities,
-                )
-                .unwrap();
-            //)?;
-
-            let profiles = vec![profile_info];
-
-            let mut profile_list_info = vk::VideoProfileListInfoKHR::default().profiles(&profiles);
-
-            let format_info = vk::PhysicalDeviceVideoFormatInfoKHR::default()
-                .push_next(&mut profile_list_info)
-                .image_usage(vk::ImageUsageFlags::VIDEO_DECODE_DST_KHR);
-
-            let format_properties_count = video_queue_loader
-                .get_physical_device_video_format_properties_khr_len(pdevice, &format_info);
-
-            let mut format_properties =
-                vec![vk::VideoFormatPropertiesKHR::default(); format_properties_count];
-
-            video_queue_loader
-                .get_physical_device_video_format_properties_khr(
-                    pdevice,
-                    &format_info,
-                    &mut format_properties, //)?;
-                )
                 .unwrap();
 
             let present_queue = device.get_device_queue(graphics_queue_family_index, 0);
@@ -682,6 +661,9 @@ impl ExampleBase {
                 surface_loader,
                 surface_format,
                 present_queue,
+                //video_profiles,
+                //dst_video_format,
+                //dpb_video_format,
                 surface_resolution,
                 swapchain_loader,
                 swapchain,
