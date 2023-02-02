@@ -18,11 +18,6 @@ use std::os::raw::c_char;
 
 use anyhow::{anyhow, Result};
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use ash::vk::{
-    KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
-};
-
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -466,6 +461,9 @@ impl ExampleBase {
                     &mut format_properties, //)?;
                 )
                 .unwrap();
+
+
+            
 
             let present_queue = device.get_device_queue(graphics_queue_family_index, 0);
 
