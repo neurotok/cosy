@@ -51,6 +51,19 @@ name = "ash"
 version = "0.37.0+1.3.238"
 
 [[package]]
+name = "ash-video"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash",
+ "ash-window",
+ "image",
+ "mp4parse",
+ "raw-window-handle 0.5.0",
+ "winit",
+]
+
+[[package]]
 name = "ash-window"
 version = "0.11.0"
 dependencies = [
@@ -243,19 +256,6 @@ dependencies = [
  "core-graphics",
  "foreign-types 0.3.2",
  "libc",
-]
-
-[[package]]
-name = "cozy"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ash",
- "ash-window",
- "image",
- "mp4parse",
- "raw-window-handle 0.5.0",
- "winit",
 ]
 
 [[package]]

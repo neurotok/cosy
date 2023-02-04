@@ -3,7 +3,7 @@ use std::env;
 use std::ffi::{CStr, CString};
 use std::io::{Cursor, Read};
 use std::mem::{self, align_of};
-use std::os::raw::{c_void, c_char};
+use std::os::raw::{c_void};
 
 use ash::extensions::khr::{VideoQueue, VideoDecodeQueue};
 use ash::util::*;
@@ -12,10 +12,9 @@ use ash::vk::{KhrVideoQueueFn, KhrVideoDecodeQueueFn};
 use ash::vk::native::StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN;
 
 use anyhow::Result;
-
-use cozy::*;
-
 use mp4parse;
+use ash_video::*;
+
 
 struct VideoSpec {
     width: u16,
@@ -91,8 +90,6 @@ fn main() -> Result<()> {
             match track.track_type {
                 mp4parse::TrackType::Video => {
                     let stsd = track.stsd.expect("expected an stsd");
-
-                    let stcs = track.stsc.expect("expected an stsc");
 
                     let v = match stsd.descriptions.first().expect("expected a SampleEntry") {
                         mp4parse::SampleEntry::Video(v) => v,
