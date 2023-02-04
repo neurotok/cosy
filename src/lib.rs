@@ -204,6 +204,7 @@ pub struct ExampleBase {
     pub pool: vk::CommandPool,
     pub draw_command_buffer: vk::CommandBuffer,
     pub setup_command_buffer: vk::CommandBuffer,
+    pub decode_command_buffer: vk::CommandBuffer,
 
     pub depth_image: vk::Image,
     pub depth_image_view: vk::ImageView,
@@ -511,7 +512,7 @@ impl ExampleBase {
             let pool = device.create_command_pool(&pool_create_info, None).unwrap();
 
             let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
-                .command_buffer_count(2)
+                .command_buffer_count(3)
                 .command_pool(pool)
                 .level(vk::CommandBufferLevel::PRIMARY);
 
@@ -520,6 +521,7 @@ impl ExampleBase {
                 .unwrap();
             let setup_command_buffer = command_buffers[0];
             let draw_command_buffer = command_buffers[1];
+            let decode_command_buffer = command_buffers[2];
 
             let present_images = swapchain_loader.get_swapchain_images(swapchain).unwrap();
             let present_image_views: Vec<vk::ImageView> = present_images
@@ -672,6 +674,7 @@ impl ExampleBase {
                 pool,
                 draw_command_buffer,
                 setup_command_buffer,
+                decode_command_buffer,
                 depth_image,
                 depth_image_view,
                 present_complete_semaphore,

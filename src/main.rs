@@ -13,8 +13,8 @@ use ash::vk::native::StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN;
 
 use anyhow::Result;
 use mp4parse;
-use ash_video::*;
 
+use ash_video::*;
 
 struct VideoSpec {
     width: u16,
@@ -1061,6 +1061,7 @@ fn main() -> Result<()> {
                 &[base.present_complete_semaphore],
                 &[base.rendering_complete_semaphore],
                 |device, draw_command_buffer| {
+                    /*
                     device.cmd_begin_render_pass(
                         draw_command_buffer,
                         &render_pass_begin_info,
@@ -1104,6 +1105,7 @@ fn main() -> Result<()> {
                     // Or draw without the index buffer
                     // device.cmd_draw(draw_command_buffer, 3, 1, 0, 0);
                     device.cmd_end_render_pass(draw_command_buffer);
+                    */
 
                     let extension_properties = vk::ExtensionProperties::default()
                     .extension_name(vk_make_extension_name("VK_KHR_video_decode_queue"))
@@ -1176,7 +1178,6 @@ fn main() -> Result<()> {
             .destroy_shader_module(vertex_shader_module, None);
         base.device
             .destroy_shader_module(fragment_shader_module, None);
-        /*
         base.device.destroy_buffer(bistream_buffer, None);
         base.device.free_memory(dpb_memory, None);
         base.device.destroy_image(dpb_image, None);
@@ -1184,7 +1185,6 @@ fn main() -> Result<()> {
         base.device.free_memory(dst_memory, None);
         base.device.destroy_image(dst_image, None);
         base.device.destroy_image_view(dst_image_view, None);
-        */
         base.device.free_memory(image_buffer_memory, None);
         base.device.destroy_buffer(image_buffer, None);
         base.device.free_memory(texture_memory, None);
