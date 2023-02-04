@@ -1,13 +1,13 @@
 use std::default::Default;
 use std::env;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::io::{Cursor, Read};
 use std::mem::{self, align_of};
-use std::os::raw::c_void;
+use std::os::raw::{c_void, c_char};
 
 use ash::extensions::khr::{VideoQueue, VideoDecodeQueue};
 use ash::util::*;
-use ash::vk;
+use ash::vk::{self, VideoSessionCreateInfoKHR};
 use ash::vk::{KhrVideoQueueFn, KhrVideoDecodeQueueFn};
 use ash::vk::native::StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN;
 
@@ -45,6 +45,22 @@ pub struct Vector3 {
     pub y: f32,
     pub z: f32,
     pub _pad: f32,
+}
+
+pub fn vk_make_video_std_version(major: u32, minor: u32, patch: u32) -> u32 {
+    (major << 22) | (minor << 12) | patch
+}
+
+
+fn vk_make_extension_name(text: &str) -> [i8; 256] {
+    let mut array: [i8; 256] = [0; 256];
+    let bytes = CString::new(text).unwrap().into_bytes();
+
+    for (i, &b) in bytes.iter().enumerate() {
+        array[i] = b as i8;
+    }
+
+    array
 }
 
 fn main() -> Result<()> {
@@ -153,20 +169,19 @@ fn main() -> Result<()> {
         let mut capabilities =
             vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capabilities);
 
-        //let video_queue_loader = VideoQueue::new(&base.instance, &base.device);
-        let video_queue_loader = VideoQueue::new(&base.entry, &base.instance);
+        let video_queue_loader = VideoQueue::new(&base.entry, &base.instance, &base.device);
+        //let video_queue_loader = VideoQueue::new(&base.entry, &base.instance);
 
         let video_decode_queue_loader = VideoDecodeQueue::new(&base.instance, &base.device);
 
         video_queue_loader
-            .get_physical_device_video_capabilities_khr(
+            .get_physical_device_video_capabilities(
                 base.pdevice,
                 &profile_info,
                 &mut capabilities,
             )
             .unwrap();
 
-        /*
         let video_profiles = vec![profile_info];
 
         let mut profile_list_info =
@@ -351,7 +366,7 @@ fn main() -> Result<()> {
             .device
             .create_image_view(&dpb_image_view_info, None)
             .unwrap();
-        */
+
         let renderpass_attachments = [
             vk::AttachmentDescription {
                 format: base.surface_format.format,
@@ -1092,10 +1107,29 @@ fn main() -> Result<()> {
                     // Or draw without the index buffer
                     // device.cmd_draw(draw_command_buffer, 3, 1, 0, 0);
                     device.cmd_end_render_pass(draw_command_buffer);
-                    /*
+
+                    let extension_properties = vk::ExtensionProperties::default()
+                    .extension_name(vk_make_extension_name("VK_KHR_video_decode_queue"))
+                    .spec_version(vk_make_video_std_version(1, 0, 0));
+
+                    let video_session_info = vk::VideoSessionCreateInfoKHR::default()
+                    .queue_family_index(base.decode_queue_family_index)
+                    .video_profile(&video_profiles[0])
+                    .picture_format(dst_video_format)
+                    .std_header_version(&extension_properties);
+
+
+                    let video_session = video_queue_loader.create_video_session(
+                        &video_session_info,
+                        None,
+                    ).unwrap();
+
+                    let begin_info = vk::VideoBeginCodingInfoKHR::default()
+                    .video_session(video_session);
+
                     video_queue_loader.cmd_begin_video_coding(
                         draw_command_buffer,
-                        &vk::VideoBeginCodingInfoKHR::default(),
+                        &begin_info,
                     );
 
                     let decode_output_picture_resource = vk::VideoPictureResourceInfoKHR {
@@ -1120,7 +1154,6 @@ fn main() -> Result<()> {
                         draw_command_buffer,
                         &vk::VideoEndCodingInfoKHR::default(),
                     );
-                    */
                 },
             );
             //let mut present_info_err = mem::zeroed();
