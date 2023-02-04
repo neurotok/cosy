@@ -5,9 +5,10 @@ use std::io::{Cursor, Read};
 use std::mem::{self, align_of};
 use std::os::raw::c_void;
 
-use ash::extensions::khr::VideoQueue;
+use ash::extensions::khr::{VideoQueue, VideoDecodeQueue};
 use ash::util::*;
 use ash::vk;
+use ash::vk::{KhrVideoQueueFn, KhrVideoDecodeQueueFn};
 use ash::vk::native::StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN;
 
 use anyhow::Result;
@@ -126,9 +127,14 @@ fn main() -> Result<()> {
 
         let base = ExampleBase::new(video_spec.width as u32, video_spec.height as u32)?;
 
+        let mut video_decode_usage_info = vk::VideoDecodeUsageInfoKHR::default()
+            .video_usage_hints(vk::VideoDecodeUsageFlagsKHR::OFFLINE);
+
         let mut video_profile_operation = vk::VideoDecodeH264ProfileInfoKHR::default()
             .std_profile_idc(StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN)
             .picture_layout(vk::VideoDecodeH264PictureLayoutFlagsKHR::PROGRESSIVE);
+
+        video_profile_operation.p_next = &mut video_decode_usage_info as *mut _ as _;
 
         let profile_info = vk::VideoProfileInfoKHR::default()
             .push_next(&mut video_profile_operation)
@@ -147,7 +153,10 @@ fn main() -> Result<()> {
         let mut capabilities =
             vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capabilities);
 
+        //let video_queue_loader = VideoQueue::new(&base.instance, &base.device);
         let video_queue_loader = VideoQueue::new(&base.entry, &base.instance);
+
+        let video_decode_queue_loader = VideoDecodeQueue::new(&base.instance, &base.device);
 
         video_queue_loader
             .get_physical_device_video_capabilities_khr(
@@ -157,6 +166,7 @@ fn main() -> Result<()> {
             )
             .unwrap();
 
+        /*
         let video_profiles = vec![profile_info];
 
         let mut profile_list_info =
@@ -341,7 +351,7 @@ fn main() -> Result<()> {
             .device
             .create_image_view(&dpb_image_view_info, None)
             .unwrap();
-
+        */
         let renderpass_attachments = [
             vk::AttachmentDescription {
                 format: base.surface_format.format,
@@ -1082,6 +1092,35 @@ fn main() -> Result<()> {
                     // Or draw without the index buffer
                     // device.cmd_draw(draw_command_buffer, 3, 1, 0, 0);
                     device.cmd_end_render_pass(draw_command_buffer);
+                    /*
+                    video_queue_loader.cmd_begin_video_coding(
+                        draw_command_buffer,
+                        &vk::VideoBeginCodingInfoKHR::default(),
+                    );
+
+                    let decode_output_picture_resource = vk::VideoPictureResourceInfoKHR {
+                        base_array_layer: 0,
+                        image_view_binding: dst_image_view,
+                        ..Default::default()
+                    };
+
+                    let decode_info = vk::VideoDecodeInfoKHR {
+                        src_buffer: bistream_buffer,
+                        dst_picture_resource: decode_output_picture_resource,
+                        reference_slot_count: 0,
+                        ..Default::default()
+                    };
+
+                    video_decode_queue_loader.cmd_decode_video(
+                        draw_command_buffer,
+                        &decode_info,
+                    );
+
+                    video_queue_loader.cmd_end_video_coding(
+                        draw_command_buffer,
+                        &vk::VideoEndCodingInfoKHR::default(),
+                    );
+                    */
                 },
             );
             //let mut present_info_err = mem::zeroed();
@@ -1107,18 +1146,15 @@ fn main() -> Result<()> {
             .destroy_shader_module(vertex_shader_module, None);
         base.device
             .destroy_shader_module(fragment_shader_module, None);
-
+        /*
         base.device.destroy_buffer(bistream_buffer, None);
-
-
         base.device.free_memory(dpb_memory, None);
         base.device.destroy_image(dpb_image, None);
         base.device.destroy_image_view(dpb_image_view, None);
-
         base.device.free_memory(dst_memory, None);
         base.device.destroy_image(dst_image, None);
         base.device.destroy_image_view(dst_image_view, None);
-
+        */
         base.device.free_memory(image_buffer_memory, None);
         base.device.destroy_buffer(image_buffer, None);
         base.device.free_memory(texture_memory, None);

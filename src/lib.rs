@@ -3,7 +3,7 @@ use ash::{
         ext::DebugUtils,
         khr::{Surface, Swapchain, VideoQueue},
     },
-    vk::KhrVideoQueueFn,
+    vk::KhrVideoQueueFn, vk::KhrVideoDecodeQueueFn,
 };
 
 use ash::{vk, Entry};
@@ -154,14 +154,14 @@ pub fn find_video_format(
 
     unsafe {
         let format_properties_count = video_queue_loader
-            .get_physical_device_video_format_properties_khr_len(pdevice, &format_info);
+            .get_physical_device_video_format_properties_len(pdevice, &format_info);
 
         assert!(format_properties_count > 0);
 
         let mut format_properties =
             vec![vk::VideoFormatPropertiesKHR::default(); format_properties_count];
 
-        video_queue_loader.get_physical_device_video_format_properties_khr(
+        video_queue_loader.get_physical_device_video_format_properties(
             pdevice,
             &format_info,
             &mut format_properties,
