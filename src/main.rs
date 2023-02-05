@@ -8,10 +8,11 @@ use std::os::raw::c_void;
 use ash::extensions::khr::{VideoDecodeQueue, VideoQueue};
 use ash::util::*;
 use ash::vk::native::{
+    StdVideoH264MemMgmtControlOp_STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_INVALID,
     StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_BASELINE,
-    StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN, StdVideoH264MemMgmtControlOp_STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_INVALID,
+    StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN,
 };
-use ash::vk::{self, VideoSessionCreateInfoKHR, DeviceMemory};
+use ash::vk::{self, DeviceMemory, VideoSessionCreateInfoKHR};
 use ash::vk::{KhrVideoDecodeQueueFn, KhrVideoQueueFn};
 
 use anyhow::Result;
@@ -62,6 +63,19 @@ fn vk_make_extension_name(text: &str) -> [i8; 256] {
     }
 
     array
+}
+
+fn vk_find_bit_index(num: u32) -> u32 {
+    let mut index = 0;
+    let mut bits = num;
+    while bits != 0 {
+        if bits & 1 == 1 {
+            return index;
+        }
+        index += 1;
+        bits >>= 1;
+    }
+    return index;
 }
 
 fn main() -> Result<()> {
@@ -381,47 +395,76 @@ fn main() -> Result<()> {
             .create_video_session(&video_session_info, None)
             .unwrap();
 
-        let video_session_memory_requirements_count = video_queue_loader.get_video_session_memory_requirements_len(video_session);
+        let video_session_memory_requirements_count =
+            video_queue_loader.get_video_session_memory_requirements_len(video_session);
 
-        let mut video_session_memory_requirements = vec![vk::VideoSessionMemoryRequirementsKHR::default(); video_session_memory_requirements_count];
+        let mut video_session_memory_requirements =
+            vec![
+                vk::VideoSessionMemoryRequirementsKHR::default();
+                video_session_memory_requirements_count
+            ];
 
-        video_queue_loader.get_video_session_memory_requirements(video_session, &mut video_session_memory_requirements)?;
+        video_queue_loader.get_video_session_memory_requirements(
+            video_session,
+            &mut video_session_memory_requirements,
+        )?;
 
-        let mut video_session_memory = vec![vk::DeviceMemory::default(); video_session_memory_requirements_count];
-        let mut video_session_bind_memory   = vec![vk::BindVideoSessionMemoryInfoKHR::default(); video_session_memory_requirements_count];
+        let mut video_session_memory =
+            vec![vk::DeviceMemory::default(); video_session_memory_requirements_count];
+        //let mut video_session_bind_memory   = vec![vk::BindVideoSessionMemoryInfoKHR::default(); video_session_memory_requirements_count];
+        let mut video_session_bind_memory = Vec::new();
 
         // TODO single allocation + offset
         for i in 0..video_session_memory_requirements_count {
-
-            let mut memory_type_bits = video_session_memory_requirements[i].memory_requirements.memory_type_bits;
-
-            assert_ne!(memory_type_bits, 0);
-
-            let mut memory_type_index = 0;
-
-            while memory_type_bits & 1 == 0 {
-                memory_type_index += 1;
-                memory_type_bits >>= 1;
-            }
+            let memory_type_index = vk_find_bit_index(
+                video_session_memory_requirements[i]
+                    .memory_requirements
+                    .memory_type_bits,
+            );
 
             let video_session_memory_allocate_info = vk::MemoryAllocateInfo {
-                allocation_size: video_session_memory_requirements[i].memory_requirements.size,
+                allocation_size: video_session_memory_requirements[i]
+                    .memory_requirements
+                    .size,
                 memory_type_index: memory_type_index,
                 ..Default::default()
             };
 
-            video_session_memory[i] = base.device.allocate_memory(&video_session_memory_allocate_info, None)
-            .unwrap();
-            
-            video_session_bind_memory[i]
-            .memory_bind_index(video_session_memory_requirements[i].memory_bind_index)
-            .memory_size(video_session_memory_requirements[i].memory_requirements.size)
-            .memory(video_session_memory[i])
-            .memory_offset(0)
-            .memory_size(video_session_memory_requirements[i].memory_requirements.size);
+            video_session_memory[i] = base
+                .device
+                .allocate_memory(&video_session_memory_allocate_info, None)
+                .unwrap();
+
+            let video_session_bind_memory_info = vk::BindVideoSessionMemoryInfoKHR::default()
+                .memory_bind_index(video_session_memory_requirements[i].memory_bind_index)
+                .memory_size(
+                    video_session_memory_requirements[i]
+                        .memory_requirements
+                        .size,
+                )
+                .memory(video_session_memory[i])
+                .memory_offset(0)
+                .memory_size(
+                    video_session_memory_requirements[i]
+                        .memory_requirements
+                        .size,
+                );
+
+            video_session_bind_memory.push(video_session_bind_memory_info);
         }
 
-        video_queue_loader.bind_video_session_memory(video_session, &mut video_session_bind_memory)?;
+        video_queue_loader
+            .bind_video_session_memory(video_session, &mut video_session_bind_memory)?;
+
+        let mut video_decode_session_paramteres_create_info =
+            vk::VideoDecodeH264SessionParametersCreateInfoKHR::default();
+
+        let video_session_parameters_info = vk::VideoSessionParametersCreateInfoKHR::default()
+            .push_next(&mut video_decode_session_paramteres_create_info)
+            .video_session(video_session);
+
+        let video_session_paramaters = video_queue_loader
+            .create_video_session_parameters(&video_session_parameters_info, None)?;
 
         // Render pass
 
@@ -1170,7 +1213,6 @@ fn main() -> Result<()> {
             );
             */
 
-
             // TODO sync objects for decode
             record_submit_commandbuffer(
                 &base.device,
@@ -1181,10 +1223,9 @@ fn main() -> Result<()> {
                 &[base.present_complete_semaphore],
                 &[base.rendering_complete_semaphore],
                 |device, decode_command_buffer| {
-
-
-                    let begin_info =
-                        vk::VideoBeginCodingInfoKHR::default().video_session(video_session);
+                    let begin_info = vk::VideoBeginCodingInfoKHR::default()
+                        .video_session(video_session)
+                        .video_session_parameters(video_session_paramaters);
 
                     video_queue_loader.cmd_begin_video_coding(decode_command_buffer, &begin_info);
 
