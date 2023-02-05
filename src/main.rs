@@ -9,9 +9,9 @@ use ash::extensions::khr::{VideoDecodeQueue, VideoQueue};
 use ash::util::*;
 use ash::vk::native::{
     StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_BASELINE,
-    StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN,
+    StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN, StdVideoH264MemMgmtControlOp_STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_INVALID,
 };
-use ash::vk::{self, VideoSessionCreateInfoKHR};
+use ash::vk::{self, VideoSessionCreateInfoKHR, DeviceMemory};
 use ash::vk::{KhrVideoDecodeQueueFn, KhrVideoQueueFn};
 
 use anyhow::Result;
@@ -258,7 +258,7 @@ fn main() -> Result<()> {
             &base.device_memory_properties,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
         )
-        .expect("Unable to find suitable memory index for depth image.");
+        .expect("Unable to find suitable memory index for dst image.");
 
         let dst_allocate_info = vk::MemoryAllocateInfo {
             allocation_size: dst_memory_req.size,
@@ -271,7 +271,7 @@ fn main() -> Result<()> {
             .unwrap();
         base.device
             .bind_image_memory(dst_image, dst_memory, 0)
-            .expect("Unable to bind depth image memory");
+            .expect("Unable to bind dst image memory");
 
         let mut dst_image_view_usage_create_info = vk::ImageViewUsageCreateInfo {
             usage: vk::ImageUsageFlags::VIDEO_DECODE_DST_KHR,
@@ -323,7 +323,7 @@ fn main() -> Result<()> {
             &base.device_memory_properties,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
         )
-        .expect("Unable to find suitable memory index for depth image.");
+        .expect("Unable to find suitable memory index for dpb image.");
 
         let dpb_allocate_info = vk::MemoryAllocateInfo {
             allocation_size: dpb_memory_req.size,
@@ -336,7 +336,7 @@ fn main() -> Result<()> {
             .unwrap();
         base.device
             .bind_image_memory(dpb_image, dpb_memory, 0)
-            .expect("Unable to bind depth image memory");
+            .expect("Unable to bind dpb image memory");
 
         let mut dpb_image_view_usage_create_info = vk::ImageViewUsageCreateInfo {
             usage: vk::ImageUsageFlags::VIDEO_DECODE_DPB_KHR,
@@ -356,6 +356,11 @@ fn main() -> Result<()> {
             },
             ..Default::default()
         };
+
+        let dpb_image_view = base
+            .device
+            .create_image_view(&dpb_image_view_info, None)
+            .unwrap();
 
         // VideoSession
 
@@ -382,14 +387,43 @@ fn main() -> Result<()> {
 
         video_queue_loader.get_video_session_memory_requirements(video_session, &mut video_session_memory_requirements)?;
 
-        for video_session_memory in video_session_memory_requirements{
+        let mut video_session_memory = vec![vk::DeviceMemory::default(); video_session_memory_requirements_count];
+        let mut video_session_bind_memory   = vec![vk::BindVideoSessionMemoryInfoKHR::default(); video_session_memory_requirements_count];
 
+        // TODO single allocation + offset
+        for i in 0..video_session_memory_requirements_count {
+
+            let mut memory_type_bits = video_session_memory_requirements[i].memory_requirements.memory_type_bits;
+
+            assert_ne!(memory_type_bits, 0);
+
+            let mut memory_type_index = 0;
+
+            while memory_type_bits & 1 == 0 {
+                memory_type_index += 1;
+                memory_type_bits >>= 1;
+            }
+
+            let video_session_memory_allocate_info = vk::MemoryAllocateInfo {
+                allocation_size: video_session_memory_requirements[i].memory_requirements.size,
+                memory_type_index: memory_type_index,
+                ..Default::default()
+            };
+
+            video_session_memory[i] = base.device.allocate_memory(&video_session_memory_allocate_info, None)
+            .unwrap();
+            
+            video_session_bind_memory[i]
+            .memory_bind_index(video_session_memory_requirements[i].memory_bind_index)
+            .memory_size(video_session_memory_requirements[i].memory_requirements.size)
+            .memory(video_session_memory[i])
+            .memory_offset(0)
+            .memory_size(video_session_memory_requirements[i].memory_requirements.size);
         }
 
-        let dpb_image_view = base
-            .device
-            .create_image_view(&dpb_image_view_info, None)
-            .unwrap();
+        video_queue_loader.bind_video_session_memory(video_session, &mut video_session_bind_memory)?;
+
+        // Render pass
 
         let renderpass_attachments = [
             vk::AttachmentDescription {
