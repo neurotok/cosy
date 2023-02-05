@@ -3,7 +3,8 @@ use ash::{
         ext::DebugUtils,
         khr::{Surface, Swapchain, VideoQueue},
     },
-    vk::KhrVideoQueueFn, vk::KhrVideoDecodeQueueFn,
+    vk::KhrVideoDecodeQueueFn,
+    vk::KhrVideoQueueFn,
 };
 
 use ash::{vk, Entry};
@@ -201,7 +202,7 @@ pub struct ExampleBase {
     pub present_images: Vec<vk::Image>,
     pub present_image_views: Vec<vk::ImageView>,
 
-    pub pool: vk::CommandPool,
+    pub graphics_pool: vk::CommandPool,
     pub draw_command_buffer: vk::CommandBuffer,
     pub setup_command_buffer: vk::CommandBuffer,
     pub decode_command_buffer: vk::CommandBuffer,
@@ -505,24 +506,47 @@ impl ExampleBase {
                 .create_swapchain(&swapchain_create_info, None)
                 .unwrap();
 
-            let pool_create_info = vk::CommandPoolCreateInfo::default()
+            // Grapgics and resentation command pool
+            let graphics_pool_create_info = vk::CommandPoolCreateInfo::default()
                 .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
                 .queue_family_index(graphics_queue_family_index);
 
-            let pool = device.create_command_pool(&pool_create_info, None).unwrap();
+            let graphics_pool = device
+                .create_command_pool(&graphics_pool_create_info, None)
+                .unwrap();
 
-            let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
-                .command_buffer_count(3)
-                .command_pool(pool)
+            let graphics_command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
+                .command_buffer_count(2)
+                .command_pool(graphics_pool)
                 .level(vk::CommandBufferLevel::PRIMARY);
 
-            let command_buffers = device
-                .allocate_command_buffers(&command_buffer_allocate_info)
+            let graphics_command_buffers = device
+                .allocate_command_buffers(&graphics_command_buffer_allocate_info)
                 .unwrap();
-            let setup_command_buffer = command_buffers[0];
-            let draw_command_buffer = command_buffers[1];
-            let decode_command_buffer = command_buffers[2];
 
+            let setup_command_buffer = graphics_command_buffers[0];
+            let draw_command_buffer = graphics_command_buffers[1];
+
+            // Video decode command pool
+            let decode_pool_create_info = vk::CommandPoolCreateInfo::default()
+                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+                .queue_family_index(decode_queue_family_index);
+
+            let decode_pool = device
+                .create_command_pool(&decode_pool_create_info, None)
+                .unwrap();
+
+            let deocde_command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
+                .command_buffer_count(1)
+                .command_pool(decode_pool)
+                .level(vk::CommandBufferLevel::PRIMARY);
+
+            let decode_command_buffers = device
+                .allocate_command_buffers(&deocde_command_buffer_allocate_info)
+                .unwrap();
+            let decode_command_buffer = decode_command_buffers[0];
+
+            // Presentation images
             let present_images = swapchain_loader.get_swapchain_images(swapchain).unwrap();
             let present_image_views: Vec<vk::ImageView> = present_images
                 .iter()
@@ -671,7 +695,7 @@ impl ExampleBase {
                 swapchain,
                 present_images,
                 present_image_views,
-                pool,
+                graphics_pool,
                 draw_command_buffer,
                 setup_command_buffer,
                 decode_command_buffer,
@@ -708,7 +732,7 @@ impl Drop for ExampleBase {
             for &image_view in self.present_image_views.iter() {
                 self.device.destroy_image_view(image_view, None);
             }
-            self.device.destroy_command_pool(self.pool, None);
+            self.device.destroy_command_pool(self.graphics_pool, None);
             self.swapchain_loader
                 .destroy_swapchain(self.swapchain, None);
             self.device.destroy_device(None);

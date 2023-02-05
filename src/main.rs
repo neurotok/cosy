@@ -3,13 +3,16 @@ use std::env;
 use std::ffi::{CStr, CString};
 use std::io::{Cursor, Read};
 use std::mem::{self, align_of};
-use std::os::raw::{c_void};
+use std::os::raw::c_void;
 
-use ash::extensions::khr::{VideoQueue, VideoDecodeQueue};
+use ash::extensions::khr::{VideoDecodeQueue, VideoQueue};
 use ash::util::*;
+use ash::vk::native::{
+    StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_BASELINE,
+    StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN,
+};
 use ash::vk::{self, VideoSessionCreateInfoKHR};
-use ash::vk::{KhrVideoQueueFn, KhrVideoDecodeQueueFn};
-use ash::vk::native::{StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN, StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_BASELINE};
+use ash::vk::{KhrVideoDecodeQueueFn, KhrVideoQueueFn};
 
 use anyhow::Result;
 use mp4parse;
@@ -49,7 +52,6 @@ pub struct Vector3 {
 pub fn vk_make_video_std_version(major: u32, minor: u32, patch: u32) -> u32 {
     (major << 22) | (minor << 12) | patch
 }
-
 
 fn vk_make_extension_name(text: &str) -> [i8; 256] {
     let mut array: [i8; 256] = [0; 256];
@@ -172,11 +174,7 @@ fn main() -> Result<()> {
         let video_decode_queue_loader = VideoDecodeQueue::new(&base.instance, &base.device);
 
         video_queue_loader
-            .get_physical_device_video_capabilities(
-                base.pdevice,
-                &profile_info,
-                &mut capabilities,
-            )
+            .get_physical_device_video_capabilities(base.pdevice, &profile_info, &mut capabilities)
             .unwrap();
 
         let video_profiles = vec![profile_info];
@@ -233,7 +231,7 @@ fn main() -> Result<()> {
             width: video_spec.width as u32,
             height: video_spec.height as u32,
         };
-    
+
         // DST
 
         let dst_image_create_info = vk::ImageCreateInfo {
@@ -298,9 +296,9 @@ fn main() -> Result<()> {
             .device
             .create_image_view(&dst_image_view_info, None)
             .unwrap();
-        
+
         // DPB
-        
+
         let dpb_image_create_info = vk::ImageCreateInfo {
             p_next: &mut profile_list_info as *mut _ as _,
             image_type: vk::ImageType::TYPE_2D,
@@ -1032,6 +1030,7 @@ fn main() -> Result<()> {
                     vk::Fence::null(),
                 )
                 .unwrap();
+            /*
             let clear_values = [
                 vk::ClearValue {
                     color: vk::ClearColorValue {
@@ -1061,7 +1060,6 @@ fn main() -> Result<()> {
                 &[base.present_complete_semaphore],
                 &[base.rendering_complete_semaphore],
                 |device, draw_command_buffer| {
-                    /*
                     device.cmd_begin_render_pass(
                         draw_command_buffer,
                         &render_pass_begin_info,
@@ -1105,32 +1103,41 @@ fn main() -> Result<()> {
                     // Or draw without the index buffer
                     // device.cmd_draw(draw_command_buffer, 3, 1, 0, 0);
                     device.cmd_end_render_pass(draw_command_buffer);
-                    */
+                },
+            );
+            */
 
+            // TODO sync objects for decode
+            record_submit_commandbuffer(
+                &base.device,
+                base.decode_command_buffer,
+                base.draw_commands_reuse_fence,
+                base.present_queue,
+                &[vk::PipelineStageFlags::BOTTOM_OF_PIPE],
+                &[base.present_complete_semaphore],
+                &[base.rendering_complete_semaphore],
+                |device, decode_command_buffer| {
                     let extension_properties = vk::ExtensionProperties::default()
-                    .extension_name(vk_make_extension_name("VK_STD_vulkan_video_codec_h264_decode"))
-                    .spec_version(vk_make_video_std_version(1, 0, 0));
+                        .extension_name(vk_make_extension_name(
+                            "VK_STD_vulkan_video_codec_h264_decode",
+                        ))
+                        .spec_version(vk_make_video_std_version(1, 0, 0));
 
                     let video_session_info = vk::VideoSessionCreateInfoKHR::default()
-                    .queue_family_index(base.decode_queue_family_index)
-                    .video_profile(&video_profiles[0])
-                    .picture_format(dst_video_format)
-                    .std_header_version(&extension_properties)
-                    .max_coded_extent(video_extent);
+                        .queue_family_index(base.decode_queue_family_index)
+                        .video_profile(&video_profiles[0])
+                        .picture_format(dst_video_format)
+                        .std_header_version(&extension_properties)
+                        .max_coded_extent(video_extent);
 
+                    let video_session = video_queue_loader
+                        .create_video_session(&video_session_info, None)
+                        .unwrap();
 
-                    let video_session = video_queue_loader.create_video_session(
-                        &video_session_info,
-                        None,
-                    ).unwrap();
+                    let begin_info =
+                        vk::VideoBeginCodingInfoKHR::default().video_session(video_session);
 
-                    let begin_info = vk::VideoBeginCodingInfoKHR::default()
-                    .video_session(video_session);
-
-                    video_queue_loader.cmd_begin_video_coding(
-                        draw_command_buffer,
-                        &begin_info,
-                    );
+                    video_queue_loader.cmd_begin_video_coding(decode_command_buffer, &begin_info);
 
                     let decode_output_picture_resource = vk::VideoPictureResourceInfoKHR {
                         base_array_layer: 0,
@@ -1145,17 +1152,15 @@ fn main() -> Result<()> {
                         ..Default::default()
                     };
 
-                    video_decode_queue_loader.cmd_decode_video(
-                        draw_command_buffer,
-                        &decode_info,
-                    );
+                    video_decode_queue_loader.cmd_decode_video(decode_command_buffer, &decode_info);
 
                     video_queue_loader.cmd_end_video_coding(
-                        draw_command_buffer,
+                        decode_command_buffer,
                         &vk::VideoEndCodingInfoKHR::default(),
                     );
                 },
             );
+
             //let mut present_info_err = mem::zeroed();
             let present_info = vk::PresentInfoKHR {
                 wait_semaphore_count: 1,
