@@ -7,34 +7,30 @@ use std::os::raw::c_void;
 
 use ash::extensions::khr::{VideoDecodeQueue, VideoQueue};
 use ash::util::*;
-use ash::vk::native::{
-    StdVideoH264MemMgmtControlOp_STD_VIDEO_H264_MEM_MGMT_CONTROL_OP_INVALID,
-    StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_BASELINE,
-    StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN,
-};
+use ash::vk::native::StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN;
 use ash::vk::{self, DeviceMemory, VideoSessionCreateInfoKHR};
-use ash::vk::{KhrVideoDecodeQueueFn, KhrVideoQueueFn};
 
 use anyhow::Result;
 use mp4parse;
 
 use ash_video::*;
 
+#[derive(Default)]
 struct VideoSpec {
     width: u16,
     height: u16,
-    codec_type: mp4parse::CodecType,
+    max_sps_count: u32,
+    max_pps_count: u32,
 }
 
-impl Default for VideoSpec {
-    fn default() -> Self {
-        Self {
-            width: 0,
-            height: 0,
-            codec_type: mp4parse::CodecType::Unknown,
-        }
-    }
-}
+// impl Default for VideoSpec {
+//     fn default() -> Self {
+//         Self {
+//             codec_type: mp4parse::CodecType::Unknown,
+//             ..Default::default()
+//         }
+//     }
+// }
 
 #[derive(Clone, Debug, Copy)]
 struct Vertex {
@@ -48,6 +44,63 @@ pub struct Vector3 {
     pub y: f32,
     pub z: f32,
     pub _pad: f32,
+}
+
+#[derive(Debug)]
+struct AVCVideoConfiguration {
+    version: u8,
+    profile: u8,
+    compatibility: u8,
+    level: u8,
+    // indicates the length in bytes of the length field in an AVC video access unit used indicate the length of each NAL unit.
+    length_size_minus_one: u8,
+    sps: Vec<Vec<u8>>,
+    pps: Vec<Vec<u8>>,
+}
+
+fn parse_avc_config(data: &[u8]) -> AVCVideoConfiguration {
+    let version = data[0];
+    let avc_profile = data[1];
+    let avc_compatibility = data[2];
+    let avc_level = data[3];
+    let nalulength_size_minus_one = data[4] & 0b00000011;
+    let number_of_sps_nalus = data[5] & 0b00011111;
+    let mut i: usize = 6;
+
+    let sps_elems = (0..number_of_sps_nalus)
+        .map(|_| {
+            let sps_size = u16::from_be_bytes([data[i], data[i + 1]]) as usize;
+            i += 2;
+            let sps: Vec<u8> = data[i..i + sps_size].to_vec();
+            i += sps_size;
+            sps
+        })
+        .collect::<Vec<Vec<u8>>>();
+
+    let number_of_pps_nalus = data[i];
+    i += 1;
+
+    let pps_elems = (0..number_of_pps_nalus)
+        .map(|_| {
+            let pps_size = u16::from_be_bytes([data[i], data[i + 1]]) as usize;
+            i += 2;
+            let sps: Vec<u8> = data[i..i + pps_size].to_vec();
+            i += pps_size;
+            sps
+        })
+        .collect::<Vec<Vec<u8>>>();
+
+    assert_eq!(version, 1);
+
+    AVCVideoConfiguration {
+        version,
+        profile: avc_profile,
+        compatibility: avc_compatibility,
+        level: avc_level,
+        length_size_minus_one: nalulength_size_minus_one,
+        sps: sps_elems,
+        pps: pps_elems,
+    }
 }
 
 pub fn vk_make_video_std_version(major: u32, minor: u32, patch: u32) -> u32 {
@@ -85,6 +138,7 @@ fn main() -> Result<()> {
         let mut file = std::fs::File::open({
             if DEBUG_ENABLED {
                 "./samples/Big_Buck_Bunny_360_10s_1MB.mp4"
+                //"./samples/a.mp4"
             } else {
                 &args[1]
             }
@@ -105,6 +159,13 @@ fn main() -> Result<()> {
         for track in video_context.tracks {
             match track.track_type {
                 mp4parse::TrackType::Video => {
+                    //let ctts = track.ctts.unwrap();
+                    let stco = track.stco.unwrap();
+                    let stsc = track.stsc.unwrap();
+                    let stss = track.stss.unwrap();
+                    let stsz = track.stsz.unwrap();
+                    let stts = track.stts.unwrap();
+
                     let stsd = track.stsd.expect("expected an stsd");
 
                     let v = match stsd.descriptions.first().expect("expected a SampleEntry") {
@@ -112,43 +173,12 @@ fn main() -> Result<()> {
                         _ => panic!("expected a VideoSampleEntry"),
                     };
 
-                    if DEBUG_ENABLED {
-                        assert_eq!(v.width, 640);
-                        assert_eq!(v.height, 360);
-                        assert_eq!(v.codec_type, mp4parse::CodecType::H264);
-                    }
-
                     video_spec.width = v.width;
                     video_spec.height = v.height;
-                    video_spec.codec_type = v.codec_type;
 
-                    assert_eq!(
-                        match v.codec_specific {
-                            mp4parse::VideoCodecSpecific::AVCConfig(ref avc) => {
-                                assert!(!avc.is_empty());
-                                "AVC"
-                            }
-                            mp4parse::VideoCodecSpecific::VPxConfig(ref vpx) => {
-                                // We don't enter in here, we just check if fields are public.
-                                assert!(vpx.bit_depth > 0);
-                                assert!(vpx.colour_primaries > 0);
-                                assert!(vpx.chroma_subsampling > 0);
-                                assert!(!vpx.codec_init.is_empty());
-                                "VPx"
-                            }
-                            mp4parse::VideoCodecSpecific::ESDSConfig(ref mp4v) => {
-                                assert!(!mp4v.is_empty());
-                                "MP4V"
-                            }
-                            mp4parse::VideoCodecSpecific::AV1Config(ref _av1c) => {
-                                "AV1"
-                            }
-                            mp4parse::VideoCodecSpecific::H263Config(ref _h263) => {
-                                "H263"
-                            }
-                        },
-                        "AVC"
-                    );
+                    if let mp4parse::VideoCodecSpecific::AVCConfig(ref avc) = v.codec_specific {
+                        let _config = parse_avc_config(avc);
+                    }
                 }
                 _ => {}
             }
@@ -185,7 +215,8 @@ fn main() -> Result<()> {
         let video_queue_loader = VideoQueue::new(&base.entry, &base.instance, &base.device);
         //let video_queue_loader = VideoQueue::new(&base.entry, &base.instance);
 
-        let video_decode_queue_loader = VideoDecodeQueue::new(&base.entry, &base.instance, &base.device);
+        let video_decode_queue_loader =
+            VideoDecodeQueue::new(&base.entry, &base.instance, &base.device);
         //let video_decode_queue_loader = VideoDecodeQueue::new(&base.instance, &base.device);
 
         video_queue_loader
@@ -229,25 +260,69 @@ fn main() -> Result<()> {
             dpb_video_format = dst_video_format;
         }
 
+        // Bitstream buffer
+        
+        //let bitstream_buffer_data = [0u32, 1, 2, 2, 3, 0];
+        let bitstream_buffer_data = buf;
+
         let bitstream_buffer_info = vk::BufferCreateInfo {
             p_next: &mut profile_list_info as *mut _ as _,
-            size: buf.len() as u64,
+            //size: buf.len() as u64,
+            size: bitstream_buffer_data.len() as u64,
             usage: vk::BufferUsageFlags::VIDEO_DECODE_DST_KHR,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
 
-        let bistream_buffer = base
+        let bitstream_buffer = base
             .device
             .create_buffer(&bitstream_buffer_info, None)
             .unwrap();
+
+        /*
+        let bitstream_buffer_memory_req = base.device.get_buffer_memory_requirements(bitstream_buffer);
+        let bitstream_buffer_memory_index = find_memorytype_index(
+            &bitstream_buffer_memory_req,
+            &base.device_memory_properties,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        )
+        .expect("Unable to find suitable memorytype for the index buffer.");
+        let bitstream_allocate_info = vk::MemoryAllocateInfo {
+            allocation_size: bitstream_buffer_memory_req.size,
+            memory_type_index: bitstream_buffer_memory_index,
+            ..Default::default()
+        };
+        let bitstream_buffer_memory = base
+            .device
+            .allocate_memory(&bitstream_allocate_info, None)
+            .unwrap();
+        let bitstream_ptr: *mut c_void = base
+            .device
+            .map_memory(
+                bitstream_buffer_memory,
+                0,
+                bitstream_buffer_memory_req.size,
+                vk::MemoryMapFlags::empty(),
+            )
+            .unwrap();
+        let mut bitstream_slice = Align::new(
+            bitstream_ptr,
+            align_of::<u32>() as u64,
+            bitstream_buffer_memory_req.size,
+        );
+        bitstream_slice.copy_from_slice(&bitstream_buffer_data);
+        base.device.unmap_memory(bitstream_buffer_memory);
+        base.device
+            .bind_buffer_memory(bitstream_buffer, bitstream_buffer_memory, 0)
+            .unwrap(); 
+        */
+
+        // DST
 
         let video_extent = vk::Extent2D {
             width: video_spec.width as u32,
             height: video_spec.height as u32,
         };
-
-        // DST
 
         let dst_image_create_info = vk::ImageCreateInfo {
             p_next: &mut profile_list_info as *mut _ as _,
@@ -399,8 +474,7 @@ fn main() -> Result<()> {
         let video_session_memory_requirements_count =
             video_queue_loader.get_video_session_memory_requirements_len(video_session);
 
-        let mut video_session_memory_requirements =
-            vec![
+        let mut video_session_memory_requirements = vec![
                 vk::VideoSessionMemoryRequirementsKHR::default();
                 video_session_memory_requirements_count
             ];
@@ -457,8 +531,14 @@ fn main() -> Result<()> {
         video_queue_loader
             .bind_video_session_memory(video_session, &mut video_session_bind_memory)?;
 
+        // Video session parameters
+
+        let video_decode_session_paramteres_add_info =
+            vk::VideoDecodeH264SessionParametersAddInfoKHR::default();
+
         let mut video_decode_session_paramteres_create_info =
-            vk::VideoDecodeH264SessionParametersCreateInfoKHR::default();
+            vk::VideoDecodeH264SessionParametersCreateInfoKHR::default()
+                .parameters_add_info(&video_decode_session_paramteres_add_info);
 
         let video_session_parameters_info = vk::VideoSessionParametersCreateInfoKHR::default()
             .push_next(&mut video_decode_session_paramteres_create_info)
@@ -466,6 +546,45 @@ fn main() -> Result<()> {
 
         let video_session_paramaters = video_queue_loader
             .create_video_session_parameters(&video_session_parameters_info, None)?;
+
+        // Record and submit
+        record_submit_commandbuffer(
+            &base.device,
+            base.decode_command_buffer,
+            base.draw_commands_reuse_fence,
+            base.present_queue,
+            &[vk::PipelineStageFlags::BOTTOM_OF_PIPE],
+            &[base.present_complete_semaphore],
+            &[base.rendering_complete_semaphore],
+            |device, decode_command_buffer| {
+
+                let begin_info =
+                vk::VideoBeginCodingInfoKHR::default().video_session(video_session)
+                .video_session_parameters(video_session_paramaters);
+
+                video_queue_loader.cmd_begin_video_coding(decode_command_buffer, &begin_info);
+
+                let decode_output_picture_resource = vk::VideoPictureResourceInfoKHR {
+                    base_array_layer: 0,
+                    image_view_binding: dst_image_view,
+                    ..Default::default()
+                };
+
+                let decode_info = vk::VideoDecodeInfoKHR {
+                    src_buffer: bitstream_buffer,
+                    dst_picture_resource: decode_output_picture_resource,
+                    reference_slot_count: 0,
+                    ..Default::default()
+                };
+
+                video_decode_queue_loader.cmd_decode_video(decode_command_buffer, &decode_info);
+
+                video_queue_loader.cmd_end_video_coding(
+                    decode_command_buffer,
+                    &vk::VideoEndCodingInfoKHR::default(),
+                );
+            },
+        );
 
         // Render pass
 
@@ -1137,7 +1256,7 @@ fn main() -> Result<()> {
                     vk::Fence::null(),
                 )
                 .unwrap();
-            /*
+
             let clear_values = [
                 vk::ClearValue {
                     color: vk::ClearColorValue {
@@ -1212,45 +1331,6 @@ fn main() -> Result<()> {
                     device.cmd_end_render_pass(draw_command_buffer);
                 },
             );
-            */
-
-            // TODO sync objects for decode
-            record_submit_commandbuffer(
-                &base.device,
-                base.decode_command_buffer,
-                base.draw_commands_reuse_fence,
-                base.present_queue,
-                &[vk::PipelineStageFlags::BOTTOM_OF_PIPE],
-                &[base.present_complete_semaphore],
-                &[base.rendering_complete_semaphore],
-                |device, decode_command_buffer| {
-                    let begin_info = vk::VideoBeginCodingInfoKHR::default()
-                        .video_session(video_session)
-                        .video_session_parameters(video_session_paramaters);
-
-                    video_queue_loader.cmd_begin_video_coding(decode_command_buffer, &begin_info);
-
-                    let decode_output_picture_resource = vk::VideoPictureResourceInfoKHR {
-                        base_array_layer: 0,
-                        image_view_binding: dst_image_view,
-                        ..Default::default()
-                    };
-
-                    let decode_info = vk::VideoDecodeInfoKHR {
-                        src_buffer: bistream_buffer,
-                        dst_picture_resource: decode_output_picture_resource,
-                        reference_slot_count: 0,
-                        ..Default::default()
-                    };
-
-                    video_decode_queue_loader.cmd_decode_video(decode_command_buffer, &decode_info);
-
-                    video_queue_loader.cmd_end_video_coding(
-                        decode_command_buffer,
-                        &vk::VideoEndCodingInfoKHR::default(),
-                    );
-                },
-            );
 
             //let mut present_info_err = mem::zeroed();
             let present_info = vk::PresentInfoKHR {
@@ -1275,7 +1355,7 @@ fn main() -> Result<()> {
             .destroy_shader_module(vertex_shader_module, None);
         base.device
             .destroy_shader_module(fragment_shader_module, None);
-        base.device.destroy_buffer(bistream_buffer, None);
+        base.device.destroy_buffer(bitstream_buffer, None);
         base.device.free_memory(dpb_memory, None);
         base.device.destroy_image(dpb_image, None);
         base.device.destroy_image_view(dpb_image_view, None);
