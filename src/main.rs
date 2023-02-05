@@ -357,6 +357,35 @@ fn main() -> Result<()> {
             ..Default::default()
         };
 
+        // VideoSession
+
+        let extension_properties = vk::ExtensionProperties::default()
+            .extension_name(vk_make_extension_name(
+                "VK_STD_vulkan_video_codec_h264_decode",
+            ))
+            .spec_version(vk_make_video_std_version(1, 0, 0));
+
+        let video_session_info = vk::VideoSessionCreateInfoKHR::default()
+            .queue_family_index(base.decode_queue_family_index)
+            .video_profile(&video_profiles[0])
+            .picture_format(dst_video_format)
+            .std_header_version(&extension_properties)
+            .max_coded_extent(video_extent);
+
+        let video_session = video_queue_loader
+            .create_video_session(&video_session_info, None)
+            .unwrap();
+
+        let video_session_memory_requirements_count = video_queue_loader.get_video_session_memory_requirements_len(video_session);
+
+        let mut video_session_memory_requirements = vec![vk::VideoSessionMemoryRequirementsKHR::default(); video_session_memory_requirements_count];
+
+        video_queue_loader.get_video_session_memory_requirements(video_session, &mut video_session_memory_requirements)?;
+
+        for video_session_memory in video_session_memory_requirements{
+
+        }
+
         let dpb_image_view = base
             .device
             .create_image_view(&dpb_image_view_info, None)
@@ -1107,6 +1136,7 @@ fn main() -> Result<()> {
             );
             */
 
+
             // TODO sync objects for decode
             record_submit_commandbuffer(
                 &base.device,
@@ -1117,22 +1147,7 @@ fn main() -> Result<()> {
                 &[base.present_complete_semaphore],
                 &[base.rendering_complete_semaphore],
                 |device, decode_command_buffer| {
-                    let extension_properties = vk::ExtensionProperties::default()
-                        .extension_name(vk_make_extension_name(
-                            "VK_STD_vulkan_video_codec_h264_decode",
-                        ))
-                        .spec_version(vk_make_video_std_version(1, 0, 0));
 
-                    let video_session_info = vk::VideoSessionCreateInfoKHR::default()
-                        .queue_family_index(base.decode_queue_family_index)
-                        .video_profile(&video_profiles[0])
-                        .picture_format(dst_video_format)
-                        .std_header_version(&extension_properties)
-                        .max_coded_extent(video_extent);
-
-                    let video_session = video_queue_loader
-                        .create_video_session(&video_session_info, None)
-                        .unwrap();
 
                     let begin_info =
                         vk::VideoBeginCodingInfoKHR::default().video_session(video_session);
