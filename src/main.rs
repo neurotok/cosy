@@ -383,7 +383,9 @@ fn main() -> Result<()> {
             .extension_name(vk_make_extension_name(
                 "VK_STD_vulkan_video_codec_h264_decode",
             ))
-            .spec_version(vk_make_video_std_version(1, 0, 0));
+            //TODO header version update
+            //.spec_version(vk_make_video_std_version(1, 0, 0));
+            .spec_version(vk_make_video_std_version(0, 9, 8));
 
         let video_session_info = vk::VideoSessionCreateInfoKHR::default()
             .queue_family_index(base.decode_queue_family_index)
