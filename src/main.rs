@@ -185,7 +185,8 @@ fn main() -> Result<()> {
         let video_queue_loader = VideoQueue::new(&base.entry, &base.instance, &base.device);
         //let video_queue_loader = VideoQueue::new(&base.entry, &base.instance);
 
-        let video_decode_queue_loader = VideoDecodeQueue::new(&base.instance, &base.device);
+        let video_decode_queue_loader = VideoDecodeQueue::new(&base.entry, &base.instance, &base.device);
+        //let video_decode_queue_loader = VideoDecodeQueue::new(&base.instance, &base.device);
 
         video_queue_loader
             .get_physical_device_video_capabilities(base.pdevice, &profile_info, &mut capabilities)
