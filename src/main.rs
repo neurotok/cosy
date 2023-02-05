@@ -9,7 +9,7 @@ use ash::extensions::khr::{VideoQueue, VideoDecodeQueue};
 use ash::util::*;
 use ash::vk::{self, VideoSessionCreateInfoKHR};
 use ash::vk::{KhrVideoQueueFn, KhrVideoDecodeQueueFn};
-use ash::vk::native::StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN;
+use ash::vk::native::{StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN, StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_BASELINE};
 
 use anyhow::Result;
 use mp4parse;
@@ -140,14 +140,14 @@ fn main() -> Result<()> {
 
         let base = ExampleBase::new(video_spec.width as u32, video_spec.height as u32)?;
 
-        let mut video_decode_usage_info = vk::VideoDecodeUsageInfoKHR::default()
-            .video_usage_hints(vk::VideoDecodeUsageFlagsKHR::OFFLINE);
+        // let mut video_decode_usage_info = vk::VideoDecodeUsageInfoKHR::default()
+        //     .video_usage_hints(vk::VideoDecodeUsageFlagsKHR::OFFLINE);
 
         let mut video_profile_operation = vk::VideoDecodeH264ProfileInfoKHR::default()
             .std_profile_idc(StdVideoH264ProfileIdc_STD_VIDEO_H264_PROFILE_IDC_MAIN)
             .picture_layout(vk::VideoDecodeH264PictureLayoutFlagsKHR::PROGRESSIVE);
 
-        video_profile_operation.p_next = &mut video_decode_usage_info as *mut _ as _;
+        //video_profile_operation.p_next = &mut video_decode_usage_info as *mut _ as _;
 
         let profile_info = vk::VideoProfileInfoKHR::default()
             .push_next(&mut video_profile_operation)
@@ -1108,14 +1108,15 @@ fn main() -> Result<()> {
                     */
 
                     let extension_properties = vk::ExtensionProperties::default()
-                    .extension_name(vk_make_extension_name("VK_KHR_video_decode_queue"))
+                    .extension_name(vk_make_extension_name("VK_STD_vulkan_video_codec_h264_decode"))
                     .spec_version(vk_make_video_std_version(1, 0, 0));
 
                     let video_session_info = vk::VideoSessionCreateInfoKHR::default()
                     .queue_family_index(base.decode_queue_family_index)
                     .video_profile(&video_profiles[0])
                     .picture_format(dst_video_format)
-                    .std_header_version(&extension_properties);
+                    .std_header_version(&extension_properties)
+                    .max_coded_extent(video_extent);
 
 
                     let video_session = video_queue_loader.create_video_session(
