@@ -137,8 +137,8 @@ fn main() -> Result<()> {
 
         let mut file = std::fs::File::open({
             if DEBUG_ENABLED {
-                "./samples/Big_Buck_Bunny_360_10s_1MB.mp4"
-                //"./samples/a.mp4"
+                //"./samples/Big_Buck_Bunny_360_10s_1MB.mp4"
+                "./samples/a.mp4"
             } else {
                 &args[1]
             }
@@ -166,6 +166,8 @@ fn main() -> Result<()> {
                     let stsz = track.stsz.unwrap();
                     let stts = track.stts.unwrap();
 
+                    //offset 48
+                    //size 90
                     let stsd = track.stsd.expect("expected an stsd");
 
                     let v = match stsd.descriptions.first().expect("expected a SampleEntry") {
@@ -212,11 +214,11 @@ fn main() -> Result<()> {
         let mut capabilities =
             vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capabilities);
 
-        let video_queue_loader = VideoQueue::new(&base.entry, &base.instance, &base.device);
+        let video_queue_loader = VideoQueue::new(&base.instance, &base.device);
         //let video_queue_loader = VideoQueue::new(&base.entry, &base.instance);
 
         let video_decode_queue_loader =
-            VideoDecodeQueue::new(&base.entry, &base.instance, &base.device);
+            VideoDecodeQueue::new(&base.instance, &base.device);
         //let video_decode_queue_loader = VideoDecodeQueue::new(&base.instance, &base.device);
 
         video_queue_loader
@@ -279,7 +281,6 @@ fn main() -> Result<()> {
             .create_buffer(&bitstream_buffer_info, None)
             .unwrap();
 
-        /*
         let bitstream_buffer_memory_req = base.device.get_buffer_memory_requirements(bitstream_buffer);
         let bitstream_buffer_memory_index = find_memorytype_index(
             &bitstream_buffer_memory_req,
@@ -315,7 +316,6 @@ fn main() -> Result<()> {
         base.device
             .bind_buffer_memory(bitstream_buffer, bitstream_buffer_memory, 0)
             .unwrap(); 
-        */
 
         // DST
 
@@ -458,7 +458,9 @@ fn main() -> Result<()> {
             .extension_name(vk_make_extension_name(
                 "VK_STD_vulkan_video_codec_h264_decode",
             ))
+            //TODO header version update
             .spec_version(vk_make_video_std_version(1, 0, 0));
+            //.spec_version(vk_make_video_std_version(0, 9, 8));
 
         let video_session_info = vk::VideoSessionCreateInfoKHR::default()
             .queue_family_index(base.decode_queue_family_index)
@@ -572,6 +574,8 @@ fn main() -> Result<()> {
 
                 let decode_info = vk::VideoDecodeInfoKHR {
                     src_buffer: bitstream_buffer,
+                    src_buffer_offset: 48,
+                    src_buffer_range: 90,
                     dst_picture_resource: decode_output_picture_resource,
                     reference_slot_count: 0,
                     ..Default::default()
