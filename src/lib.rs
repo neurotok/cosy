@@ -275,7 +275,7 @@ impl ExampleBase {
                 ash_window::enumerate_required_extensions(window.raw_display_handle())
                     .unwrap()
                     .to_vec();
-            extension_names.push(DebugUtils::name().as_ptr());
+            extension_names.push(DebugUtils::NAME.as_ptr());
 
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             {
@@ -422,7 +422,7 @@ impl ExampleBase {
             }
 
             let device_extension_names_raw =
-                [Swapchain::name().as_ptr(), KhrVideoQueueFn::name().as_ptr()];
+                [Swapchain::NAME.as_ptr(), KhrVideoQueueFn::NAME.as_ptr()];
             let features = vk::PhysicalDeviceFeatures {
                 shader_clip_distance: 1,
                 ..Default::default()

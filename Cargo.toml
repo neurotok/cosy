@@ -7,10 +7,10 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.68"
-#ash = {package = "ash", git = "https://github.com/neurotok/ash.git", default-features = false, features = ["linked", "debug"] }
-ash = {path = "../ash/ash", default-features = false, features = ["linked", "debug"] }
-#ash-window = {package = "ash-window", git = "https://github.com/neurotok/ash.git"}
-ash-window = {path = "../ash/ash-window"}
+ash = {package = "ash", git = "https://github.com/neurotok/ash.git", default-features = false, features = ["linked", "debug"] }
+#ash = {path = "../ash/ash", default-features = false, features = ["linked", "debug"] }
+ash-window = {package = "ash-window", git = "https://github.com/neurotok/ash.git"}
+#ash-window = {path = "../ash/ash-window"}
 image = "0.24.5"
 mp4parse = "0.12.0"
 raw-window-handle = "0.5.0"

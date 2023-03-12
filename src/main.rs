@@ -222,8 +222,7 @@ fn main() -> Result<()> {
         //let video_decode_queue_loader = VideoDecodeQueue::new(&base.instance, &base.device);
 
         video_queue_loader
-            .get_physical_device_video_capabilities(base.pdevice, &profile_info, &mut capabilities)
-            .unwrap();
+            .get_physical_device_video_capabilities(base.pdevice, &profile_info, &mut capabilities).unwrap();
 
         let video_profiles = vec![profile_info];
 
