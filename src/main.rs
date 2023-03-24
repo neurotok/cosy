@@ -214,11 +214,11 @@ fn main() -> Result<()> {
         let mut capabilities =
             vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capabilities);
 
-        let video_queue_loader = VideoQueue::new(&base.instance, &base.device);
+        let video_queue_loader = VideoQueue::new(&base.entry, &base.instance, &base.device);
         //let video_queue_loader = VideoQueue::new(&base.entry, &base.instance);
 
         let video_decode_queue_loader =
-            VideoDecodeQueue::new(&base.instance, &base.device);
+            VideoDecodeQueue::new(&base.entry, &base.instance);
         //let video_decode_queue_loader = VideoDecodeQueue::new(&base.instance, &base.device);
 
         video_queue_loader
@@ -469,7 +469,7 @@ fn main() -> Result<()> {
             .max_coded_extent(video_extent);
 
         let video_session = video_queue_loader
-            .create_video_session(&video_session_info, None)
+            .create_video_session(base.device.handle(),&video_session_info, None)
             .unwrap();
 
         let video_session_memory_requirements_count =
