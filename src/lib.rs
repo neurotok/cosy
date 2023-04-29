@@ -203,6 +203,7 @@ pub struct ExampleBase {
     pub present_image_views: Vec<vk::ImageView>,
 
     pub graphics_pool: vk::CommandPool,
+    pub decode_pool: vk::CommandPool,
     pub draw_command_buffer: vk::CommandBuffer,
     pub setup_command_buffer: vk::CommandBuffer,
     pub decode_command_buffer: vk::CommandBuffer,
@@ -544,6 +545,7 @@ impl ExampleBase {
             let decode_command_buffers = device
                 .allocate_command_buffers(&deocde_command_buffer_allocate_info)
                 .unwrap();
+
             let decode_command_buffer = decode_command_buffers[0];
 
             // Presentation images
@@ -696,6 +698,7 @@ impl ExampleBase {
                 present_images,
                 present_image_views,
                 graphics_pool,
+                decode_pool,
                 draw_command_buffer,
                 setup_command_buffer,
                 decode_command_buffer,
@@ -717,6 +720,8 @@ impl ExampleBase {
 impl Drop for ExampleBase {
     fn drop(&mut self) {
         unsafe {
+
+            
             self.device.device_wait_idle().unwrap();
             self.device
                 .destroy_semaphore(self.present_complete_semaphore, None);
@@ -733,6 +738,8 @@ impl Drop for ExampleBase {
                 self.device.destroy_image_view(image_view, None);
             }
             self.device.destroy_command_pool(self.graphics_pool, None);
+            self.device.destroy_command_pool(self.decode_pool, None);
+
             self.swapchain_loader
                 .destroy_swapchain(self.swapchain, None);
             self.device.destroy_device(None);

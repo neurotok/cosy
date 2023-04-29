@@ -156,6 +156,8 @@ fn main() -> Result<()> {
             Some(mp4parse::MediaTimeScale(1000))
         );
 
+        let mut _config: AVCVideoConfiguration;
+
         for track in video_context.tracks {
             match track.track_type {
                 mp4parse::TrackType::Video => {
@@ -165,6 +167,10 @@ fn main() -> Result<()> {
                     let stss = track.stss.unwrap();
                     let stsz = track.stsz.unwrap();
                     let stts = track.stts.unwrap();
+
+                    for offset in stco.offsets {
+                        println!("{}", offset);
+                    }
 
                     //offset 48
                     //size 90
@@ -179,7 +185,7 @@ fn main() -> Result<()> {
                     video_spec.height = v.height;
 
                     if let mp4parse::VideoCodecSpecific::AVCConfig(ref avc) = v.codec_specific {
-                        let _config = parse_avc_config(avc);
+                        _config = parse_avc_config(avc);
                     }
                 }
                 _ => {}
@@ -215,11 +221,6 @@ fn main() -> Result<()> {
             vk::VideoCapabilitiesKHR::default().push_next(&mut decode_capabilities);
 
         let video_queue_loader = VideoQueue::new(&base.entry, &base.instance, &base.device);
-        //let video_queue_loader = VideoQueue::new(&base.entry, &base.instance);
-
-        let video_decode_queue_loader =
-            VideoDecodeQueue::new(&base.entry, &base.instance);
-        //let video_decode_queue_loader = VideoDecodeQueue::new(&base.instance, &base.device);
 
         video_queue_loader
             .get_physical_device_video_capabilities(base.pdevice, &profile_info, &mut capabilities).unwrap();
@@ -317,7 +318,6 @@ fn main() -> Result<()> {
             .unwrap(); 
 
         // DST
-
         let video_extent = vk::Extent2D {
             width: video_spec.width as u32,
             height: video_spec.height as u32,
@@ -387,7 +387,6 @@ fn main() -> Result<()> {
             .unwrap();
 
         // DPB
-
         let dpb_image_create_info = vk::ImageCreateInfo {
             p_next: &mut profile_list_info as *mut _ as _,
             image_type: vk::ImageType::TYPE_2D,
@@ -485,9 +484,9 @@ fn main() -> Result<()> {
             &mut video_session_memory_requirements,
         )?;
 
+
         let mut video_session_memory =
             vec![vk::DeviceMemory::default(); video_session_memory_requirements_count];
-        //let mut video_session_bind_memory   = vec![vk::BindVideoSessionMemoryInfoKHR::default(); video_session_memory_requirements_count];
         let mut video_session_bind_memory = Vec::new();
 
         // TODO single allocation + offset
@@ -533,7 +532,6 @@ fn main() -> Result<()> {
             .bind_video_session_memory(video_session, &mut video_session_bind_memory)?;
 
         // Video session parameters
-
         let video_decode_session_paramteres_add_info =
             vk::VideoDecodeH264SessionParametersAddInfoKHR::default();
 
@@ -548,6 +546,7 @@ fn main() -> Result<()> {
         let video_session_paramaters = video_queue_loader
             .create_video_session_parameters(&video_session_parameters_info, None)?;
 
+		/* 
         // Record and submit
         record_submit_commandbuffer(
             &base.device,
@@ -573,8 +572,8 @@ fn main() -> Result<()> {
 
                 let decode_info = vk::VideoDecodeInfoKHR {
                     src_buffer: bitstream_buffer,
-                    src_buffer_offset: 48,
-                    src_buffer_range: 90,
+                    src_buffer_offset: 1859,
+                    src_buffer_range: 26,
                     dst_picture_resource: decode_output_picture_resource,
                     reference_slot_count: 0,
                     ..Default::default()
@@ -588,7 +587,7 @@ fn main() -> Result<()> {
                 );
             },
         );
-
+        */
         // Render pass
 
         let renderpass_attachments = [
@@ -1350,6 +1349,11 @@ fn main() -> Result<()> {
         });
         base.device.device_wait_idle().unwrap();
 
+        //Destroy video
+        video_queue_loader.destroy_video_session_parameters(video_session_paramaters, None);
+        video_queue_loader.destroy_video_session(video_session, None);
+        
+
         for pipeline in graphics_pipelines {
             base.device.destroy_pipeline(pipeline, None);
         }
@@ -1358,6 +1362,8 @@ fn main() -> Result<()> {
             .destroy_shader_module(vertex_shader_module, None);
         base.device
             .destroy_shader_module(fragment_shader_module, None);
+
+        // Video resources
         base.device.destroy_buffer(bitstream_buffer, None);
         base.device.free_memory(dpb_memory, None);
         base.device.destroy_image(dpb_image, None);
@@ -1367,6 +1373,11 @@ fn main() -> Result<()> {
         base.device.destroy_image_view(dst_image_view, None);
         base.device.free_memory(image_buffer_memory, None);
         base.device.destroy_buffer(image_buffer, None);
+        for video_memory in video_session_memory {
+            base.device.free_memory(video_memory, None);
+        }
+        base.device.free_memory(bitstream_buffer_memory, None);
+
         base.device.free_memory(texture_memory, None);
         base.device.destroy_image_view(tex_image_view, None);
         base.device.destroy_image(texture_image, None);
